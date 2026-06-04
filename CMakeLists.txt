@@ -56,7 +56,8 @@ target_link_libraries(microscopy PRIVATE
 target_compile_options(microscopy PRIVATE
     ${LIBCAMERA_CFLAGS_OTHER}
     ${SDL2_CFLAGS_OTHER}
-    -Wall -Wextra -O2
+    -Wall -Wextra
+    $<IF:$<CONFIG:Debug>,-O0 -g3 -fno-omit-frame-pointer,-O2>
 )
 
 # ---------------------------------------------------------------------------

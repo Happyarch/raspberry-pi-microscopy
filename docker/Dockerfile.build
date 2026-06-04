@@ -26,8 +26,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /src
 COPY . .
 
+ARG CMAKE_BUILD_TYPE=Release
 RUN cmake -S . -B build \
-        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
         -DCMAKE_INSTALL_PREFIX=/install \
     && cmake --build build --parallel $(nproc) \
     && cmake --install build
