@@ -1,5 +1,6 @@
 build/
 deploy/
+CLAUDE.md
 compile_commands.json
 *.o
 *.a
