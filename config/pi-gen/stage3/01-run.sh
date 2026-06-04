@@ -41,6 +41,9 @@ passwd -d pi
 # Set a root password. Change before deployment!
 echo "root:microscopy" | chpasswd
 
+# Grant pi access to camera (/dev/video*) and DRM display (/dev/dri/*).
+usermod -aG video,render pi
+
 # Create output directories owned by pi.
 mkdir -p /home/pi/videos /home/pi/stills /home/pi/.cache/microscopy
 chown -R pi:pi /home/pi/videos /home/pi/stills /home/pi/.cache

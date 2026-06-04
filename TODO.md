@@ -2,13 +2,30 @@
 
 ## High Priority
 
-- [ ] **Verify libcamera API** — test `camera.cpp` against the actual libcamera version shipped in
-      Pi OS Bookworm. Control IDs (e.g. `ApertureValue`) may not be available on all lenses;
-      add graceful no-ops where controls are unsupported.
-- [ ] **Test V4L2 encoder** — confirm `/dev/video11` is the correct H264 M2M encoder node on
-      Pi 3 running 64-bit Pi OS Bookworm. Node number may differ; add auto-detection fallback.
-- [ ] **Encoder input format** — V4L2 M2M encoder on Pi may require NV12 or BGR3 instead of
-      YUV420 planar. Verify and adjust `encoder.cpp` packing if needed.
+- [ ] **SDL texture format bug** — `renderer.cpp` uses `SDL_PIXELFORMAT_YV12` (YVU order) but
+      libcamera delivers YUV420 planar (Y, U, V order). Should be `SDL_PIXELFORMAT_IYUV`.
+      With YV12, U and V planes are swapped, producing wrong chroma (purple/green tint).
+      Fix: change `SDL_PIXELFORMAT_YV12` → `SDL_PIXELFORMAT_IYUV` in `renderer.cpp`.
+
+- [ ] **libcamera Viewfinder format** — confirmed that Viewfinder role defaults to XRGB8888,
+      not YUV420. `camera.cpp` already sets `pixelFormat = formats::YUV420` explicitly, which
+      is correct, but after `validate()` the driver may adjust the format. Add a check that
+      the configured format is actually YUV420 before starting the loop, and log a clear
+      error if not.
+
+- [ ] **V4L2 encoder device node** — confirmed `/dev/video11` is bcm2835-codec-encode on Pi OS.
+      However, auto-detection is safer: open each `/dev/videoX`, call `VIDIOC_QUERYCAP`,
+      check `driver == "bcm2835-codec"` and `capabilities & V4L2_CAP_VIDEO_M2M_MPLANE`.
+
+- [ ] **`ApertureValue` control** — not confirmed present in libcamera v0.5.2. Pi cameras
+      have fixed aperture so this control likely does not exist. The guard in `camera.cpp`
+      (`cam_->controls().count(controls::ApertureValue.id())`) is the right pattern but needs
+      the correct API: use `cam_->controls().count(&controls::ApertureValue)` or check
+      availability from the camera's reported ControlInfoMap before using it.
+
+- [ ] **`pi` user group membership** — add `pi` to the `video` and `render` groups in
+      `stage3/01-run.sh` so the camera and DRM device nodes are accessible without root.
+      Without this the app will fail to open `/dev/video*` and the DRM display.
 - [ ] **SDL2 kmsdrm on Pi OS Bookworm** — confirm that SDL2 ships with the kmsdrm backend
       enabled in the Bookworm package. If not, build SDL2 from source with `--enable-video-kmsdrm`.
 - [ ] **`pi` user group membership** — add `pi` to the `video` and `render` groups in
