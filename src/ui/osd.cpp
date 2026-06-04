@@ -121,6 +121,37 @@ void Osd::draw_record_arc(int cx, int cy, int radius, float progress) {
     }
 }
 
+void Osd::draw_crosshair() {
+    // Center of the viewfinder area (above the OSD bar).
+    int cx = dw_ / 2;
+    int cy = (dh_ - bar_h_) / 2;
+
+    // Circle radius: 1/8 of the shorter display dimension.
+    int radius = std::min(dw_, dh_ - bar_h_) / 8;
+
+    // Short tick marks at the four cardinal points of the circle
+    // and a center dot — drawn with alpha so they don't dominate.
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 160);
+
+    // Circle approximated with line segments (64 segments → smooth enough).
+    constexpr int kSegs = 64;
+    float prev_x = cx + radius;
+    float prev_y = (float)cy;
+    for (int i = 1; i <= kSegs; ++i) {
+        float a  = (float)i / kSegs * 2.0f * (float)M_PI;
+        float nx = cx + radius * cosf(a);
+        float ny = cy + radius * sinf(a);
+        SDL_RenderDrawLine(renderer_, (int)prev_x, (int)prev_y, (int)nx, (int)ny);
+        prev_x = nx; prev_y = ny;
+    }
+
+    // Short crosshair lines through the center.
+    int tick = radius / 4;
+    SDL_RenderDrawLine(renderer_, cx - tick, cy,        cx + tick, cy);
+    SDL_RenderDrawLine(renderer_, cx,        cy - tick, cx,        cy + tick);
+}
+
 // ---------------------------------------------------------------------------
 // Main draw — called every frame
 // ---------------------------------------------------------------------------
@@ -129,6 +160,9 @@ void Osd::draw(const OsdState& state) {
     const SDL_Color kWhite = {255, 255, 255, 255};
     const SDL_Color kDim   = {150, 150, 150, 200};
     const SDL_Color kRed   = {220,  40,  40, 255};
+
+    // Guide overlay drawn first so the bottom bar sits on top of it.
+    if (state.show_crosshair) draw_crosshair();
 
     int bar_y   = dh_ - bar_h_;
     int icon_y  = bar_y + (bar_h_ - icon_sz_) / 2;

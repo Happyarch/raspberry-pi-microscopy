@@ -87,6 +87,7 @@ int main() {
     uint64_t  record_start  = 0;
     int       still_count   = 0;
     bool      ae_enabled    = true;
+    bool      show_crosshair = cfg.show_crosshair;
     bool      af_enabled    = true;
     float     lens_position = 0.5f;
     float     aperture      = 0.0f;   // 0 = unknown/fixed
@@ -120,6 +121,8 @@ int main() {
         af_enabled = !af_enabled;
         camera.set_af_enable(af_enabled);
     };
+
+    cbs.on_toggle_crosshair = [&]{ show_crosshair = !show_crosshair; };
 
     cbs.on_still = [&]{
         std::string dir  = ensure_dir(cfg.stills_dir);
@@ -167,6 +170,7 @@ int main() {
         osd_state.recording        = recording;
         osd_state.record_start_ms  = record_start;
         osd_state.record_hold_progress = input.record_hold_progress();
+        osd_state.show_crosshair       = show_crosshair;
 
         renderer.present_frame(frame.y, frame.u, frame.v,
                                frame.y_stride, frame.uv_stride,

@@ -24,6 +24,7 @@ The system boots directly into a full-screen live camera viewfinder with a Sony 
 | `Shift+a` | Toggle autofocus |
 | `Space` | Capture still (saved to `~/stills/`) |
 | `Shift+R` (hold 500ms) | Start/stop video recording (saved to `~/videos/`) |
+| `c` | Toggle center guide overlay (circle + crosshair) |
 | `q` / `Escape` | Quit |
 
 While recording: a red dot flashes top-left with a `HH:MM:SS'AS` timestamp (arc-seconds, 1/60 s, divides cleanly at 30/60 fps).

@@ -14,8 +14,9 @@ struct Config {
     int fps;
 
     // [display]
-    int fallback_width;
-    int fallback_height;
+    int  fallback_width;
+    int  fallback_height;
+    bool show_crosshair;  // initial crosshair/guide overlay state
 };
 
 // Load from path (falls back to defaults if file missing).

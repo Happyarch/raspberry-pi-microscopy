@@ -15,6 +15,7 @@ struct OsdState {
     bool     recording;
     uint64_t record_start_ms;     // SDL_GetTicks64() when recording began
     float    record_hold_progress;// 0–1 while Shift+R held before trigger
+    bool     show_crosshair;      // whether to draw the center guide overlay
 };
 
 class Osd {
@@ -40,6 +41,7 @@ private:
                    SDL_Color color, bool bold = false);
     void draw_icon(SDL_Texture* tex, int x, int y, uint8_t alpha = 255);
     void draw_record_arc(int cx, int cy, int radius, float progress);
+    void draw_crosshair();
     void ensure_cache_dir() const;
 
     SDL_Renderer* renderer_;

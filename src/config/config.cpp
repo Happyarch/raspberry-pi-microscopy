@@ -15,6 +15,7 @@ static Config defaults() {
     c.fps             = 30;
     c.fallback_width  = 1280;
     c.fallback_height = 720;
+    c.show_crosshair  = false;
     return c;
 }
 
@@ -56,6 +57,7 @@ Config load_config(const std::string& path) {
         } else if (section == "display") {
             if (key == "fallback_width")  c.fallback_width  = std::stoi(val);
             else if (key == "fallback_height") c.fallback_height = std::stoi(val);
+            else if (key == "show_crosshair")  c.show_crosshair  = (val == "true" || val == "1");
         }
     }
     return c;

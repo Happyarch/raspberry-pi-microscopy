@@ -10,7 +10,8 @@ struct InputCallbacks {
     std::function<void()> on_toggle_ae;
     std::function<void()> on_toggle_af;
     std::function<void()> on_still;
-    std::function<void()> on_record_toggle;  // fires after 500ms hold
+    std::function<void()> on_record_toggle;   // fires after 500ms hold
+    std::function<void()> on_toggle_crosshair;
     std::function<void()> on_quit;
 };
 

@@ -38,6 +38,11 @@ bool InputHandler::process_events() {
                 if (cbs_.on_still) cbs_.on_still();
                 break;
 
+            case SDLK_c:
+                if (!ev.key.repeat)
+                    if (cbs_.on_toggle_crosshair) cbs_.on_toggle_crosshair();
+                break;
+
             case SDLK_r:
                 if (shift && !ev.key.repeat) {
                     record_held_      = true;
