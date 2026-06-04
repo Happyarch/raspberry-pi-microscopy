@@ -1,0 +1,11 @@
+build/
+deploy/
+compile_commands.json
+*.o
+*.a
+*.so
+.cache/
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db

@@ -1,0 +1,12 @@
+IMG_NAME="microscopy-pi"
+RELEASE="bookworm"
+DEPLOY_COMPRESSION="xz"
+LOCALE_DEFAULT="en_US.UTF-8"
+TARGET_HOSTNAME="microscopy"
+KEYBOARD_KEYMAP="us"
+TIMEZONE_DEFAULT="UTC"
+FIRST_USER_NAME="pi"
+FIRST_USER_PASS=""
+ENABLE_SSH="0"
+# Build only through our custom stage (stage3-microscopy added by build-image.sh).
+STAGE_LIST="stage0 stage1 stage2 stage3-microscopy"

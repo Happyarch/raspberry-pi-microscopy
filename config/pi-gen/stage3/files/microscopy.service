@@ -1,0 +1,19 @@
+[Unit]
+Description=Microscopy Camera Application
+After=local-fs.target
+Wants=local-fs.target
+
+[Service]
+User=pi
+Group=pi
+Environment=SDL_VIDEODRIVER=kmsdrm
+Environment=SDL_AUDIODRIVER=dummy
+Environment=HOME=/home/pi
+ExecStart=/usr/local/bin/microscopy
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

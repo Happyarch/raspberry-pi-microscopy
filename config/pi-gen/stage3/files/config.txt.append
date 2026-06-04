@@ -1,0 +1,5 @@
+# Microscopy image additions
+camera_auto_detect=1
+gpu_mem=128
+hdmi_force_hotplug=1
+disable_overscan=1

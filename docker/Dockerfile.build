@@ -1,0 +1,35 @@
+FROM arm64v8/debian:bookworm
+
+# Install build tools and all ARM64 runtime + dev libraries.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    pkg-config \
+    git \
+    # Camera
+    libcamera-dev \
+    libcamera-ipa \
+    # Display / UI
+    libsdl2-dev \
+    libsdl2-ttf-dev \
+    libsdl2-image-dev \
+    # Video encode / mux
+    libavformat-dev \
+    libavcodec-dev \
+    libavutil-dev \
+    # SVG rendering at runtime (rsvg-convert used by the app itself at startup)
+    librsvg2-bin \
+    # Font (Roboto Condensed)
+    fonts-roboto \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+COPY . .
+
+RUN cmake -S . -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/install \
+    && cmake --build build --parallel $(nproc) \
+    && cmake --install build
+
+# Output: /install contains the compiled binary, icons, font, and default config.
