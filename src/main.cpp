@@ -16,15 +16,32 @@
 
 namespace fs = std::filesystem;
 
-static std::string find_config() {
-    // User config takes precedence over system config.
+static std::string user_config_path() {
     const char* home = std::getenv("HOME");
-    if (home) {
-        std::string p = std::string(home) + "/.config/microscopy.conf";
-        if (fs::exists(p)) return p;
-    }
+    return home ? std::string(home) + "/.config/microscopy.conf" : "";
+}
+
+static std::string find_config() {
+    // If the user config exists, use it.
+    std::string user = user_config_path();
+    if (!user.empty() && fs::exists(user)) return user;
+    // Fall back to system config.
     if (fs::exists("/etc/microscopy.conf")) return "/etc/microscopy.conf";
     return "";
+}
+
+// Write a default user config on first run, then load from it.
+static Config bootstrap_config() {
+    std::string path = find_config();
+    if (path.empty()) {
+        // No config anywhere — write one so the user has something to edit.
+        std::string user = user_config_path();
+        if (!user.empty()) {
+            write_default_config(user);
+            path = user;
+        }
+    }
+    return load_config(path);
 }
 
 static std::string ensure_dir(const std::string& path) {
@@ -42,7 +59,7 @@ static std::string timestamp_filename(const std::string& ext) {
 
 int main() {
     // ---- Config ----
-    Config cfg = load_config(find_config());
+    Config cfg = bootstrap_config();
 
     // ---- SDL2 init (needed before querying display modes) ----
     setenv("SDL_VIDEODRIVER", "kmsdrm",  1);
@@ -83,15 +100,20 @@ int main() {
 
     // ---- Application state ----
     OsdState  osd_state{};
-    bool      recording     = false;
-    uint64_t  record_start  = 0;
-    int       still_count   = 0;
-    bool      ae_enabled    = true;
+    bool      recording      = false;
+    uint64_t  record_start   = 0;
+    int       still_count    = 0;
+    bool      ae_enabled     = cfg.initial_ae_enabled;
+    bool      af_enabled     = cfg.initial_af_enabled;
+    float     aperture       = cfg.initial_aperture;
+    float     lens_position  = 0.5f;
     bool      show_crosshair = cfg.show_crosshair;
-    bool      af_enabled    = true;
-    float     lens_position = 0.5f;
-    float     aperture      = 0.0f;   // 0 = unknown/fixed
-    bool      should_quit   = false;
+    bool      should_quit    = false;
+
+    // Apply config-specified initial camera state.
+    camera.set_ae_enable(ae_enabled);
+    camera.set_af_enable(af_enabled);
+    if (aperture > 0.0f) camera.set_aperture(aperture);
 
     // ---- Input callbacks ----
     InputCallbacks cbs;

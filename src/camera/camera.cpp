@@ -235,12 +235,15 @@ void Camera::set_lens_position(float pos) {
 }
 
 void Camera::set_aperture(float fstop) {
-    // ApertureValue control is only available on lenses that support it.
-    ControlList ctrls(cam_->controls());
-    if (cam_->controls().count(controls::ApertureValue.id())) {
+    // ApertureValue is only present on lenses that expose it (not Pi cameras).
+    // ControlInfoMap::count() takes a const ControlId* per the libcamera API.
+    if (cam_->controls().count(&controls::ApertureValue)) {
+        ControlList ctrls(cam_->controls());
         ctrls.set(controls::ApertureValue, fstop);
         cam_->setControls(ctrls);
     }
+    // Always update the OSD value even if the lens is fixed-aperture,
+    // so manual aperture notation still shows in the display.
     std::lock_guard<std::mutex> lk(status_mutex_);
     status_.aperture = fstop;
 }

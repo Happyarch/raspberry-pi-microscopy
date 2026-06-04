@@ -2,6 +2,10 @@
 #include <string>
 #include <cstdint>
 
+// Forward-declare implementation types kept entirely in encoder.cpp.
+struct AVFormatContext;
+struct BuiltinCtx;
+
 // Encodes YUV420 frames to an MKV file.
 // Two backends: "builtin" uses V4L2 h264_v4l2m2m + libavformat;
 // "ffmpeg" forks an ffmpeg subprocess and pipes raw frames.
@@ -36,9 +40,8 @@ private:
     std::string ffmpeg_cmd_template_;
     bool open_{false};
 
-    // V4L2 builtin state
-    int v4l2_fd_{-1};
-    int avfmt_ctx_{0};  // opaque — actually AVFormatContext*
+    // V4L2 builtin state (owned; allocated in open_builtin, freed in close_builtin)
+    BuiltinCtx* builtin_ctx_{nullptr};
 
     // ffmpeg subprocess state
     int ffmpeg_stdin_{-1};

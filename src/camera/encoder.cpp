@@ -137,11 +137,7 @@ void Encoder::close_ffmpeg() {
 // ---------------------------------------------------------------------------
 // Builtin backend: V4L2 h264_v4l2m2m → libavformat MKV
 // ---------------------------------------------------------------------------
-// The VideoCore IV M2M encoder device is typically /dev/video11 on Pi OS.
-// We open it, configure for H264 output, feed raw YUV420 frames, read back
-// H264 NAL units, and mux them into an MKV file via libavformat.
 
-static constexpr const char* kV4L2EncDevice = "/dev/video11";
 static constexpr int kInputBufs  = 4;
 static constexpr int kOutputBufs = 4;
 
@@ -152,17 +148,14 @@ struct V4L2Buf {
 };
 
 struct BuiltinCtx {
-    int                    v4l2fd{-1};
-    std::vector<V4L2Buf>   in_bufs;   // MMAP input (RAW)
-    std::vector<V4L2Buf>   out_bufs;  // MMAP output (H264)
-    AVFormatContext*       fmtctx{nullptr};
-    AVStream*              stream{nullptr};
-    int64_t                pts{0};
-    int                    width{0}, height{0}, fps{0};
+    int                  v4l2fd{-1};
+    std::vector<V4L2Buf> in_bufs;
+    std::vector<V4L2Buf> out_bufs;
+    AVFormatContext*     fmtctx{nullptr};
+    AVStream*            stream{nullptr};
+    int64_t              pts{0};
+    int                  width{0}, height{0}, fps{0};
 };
-
-// We store BuiltinCtx* in the avfmt_ctx_ int field (cast).
-static BuiltinCtx* bctx_from(int v) { return reinterpret_cast<BuiltinCtx*>((intptr_t)v); }
 
 static bool v4l2_ioctl(int fd, unsigned long req, void* arg) {
     int r;
@@ -170,11 +163,32 @@ static bool v4l2_ioctl(int fd, unsigned long req, void* arg) {
     return r == 0;
 }
 
+// Scan /dev/video0-31 for the bcm2835-codec M2M encoder node.
+// Returns an open fd on success, -1 if not found.
+static int open_encoder_device() {
+    for (int i = 0; i < 32; ++i) {
+        std::string dev = "/dev/video" + std::to_string(i);
+        int fd = ::open(dev.c_str(), O_RDWR | O_NONBLOCK);
+        if (fd < 0) continue;
+
+        struct v4l2_capability cap{};
+        if (ioctl(fd, VIDIOC_QUERYCAP, &cap) == 0) {
+            bool is_bcm  = (strncmp((char*)cap.driver, "bcm2835-codec", 13) == 0);
+            bool is_m2m  = (cap.capabilities & V4L2_CAP_VIDEO_M2M_MPLANE) != 0;
+            if (is_bcm && is_m2m) return fd;
+        }
+        ::close(fd);
+    }
+    std::cerr << "[encoder] bcm2835-codec M2M encoder not found; "
+                 "falling back to /dev/video11\n";
+    return ::open("/dev/video11", O_RDWR | O_NONBLOCK);
+}
+
 bool Encoder::open_builtin(const std::string& path) {
     auto* ctx = new BuiltinCtx();
     ctx->width = width_; ctx->height = height_; ctx->fps = fps_;
 
-    ctx->v4l2fd = ::open(kV4L2EncDevice, O_RDWR | O_NONBLOCK);
+    ctx->v4l2fd = open_encoder_device();
     if (ctx->v4l2fd < 0) { delete ctx; return false; }
 
     // Set output (encoder input) format: YUV420.
@@ -283,13 +297,13 @@ bool Encoder::open_builtin(const std::string& path) {
     }
     avformat_write_header(ctx->fmtctx, nullptr);
 
-    avfmt_ctx_ = (int)(intptr_t)ctx;
+    builtin_ctx_ = ctx;
     return true;
 }
 
 bool Encoder::submit_builtin(const uint8_t* y, const uint8_t* u, const uint8_t* v,
                               int y_stride, int uv_stride) {
-    auto* ctx = bctx_from(avfmt_ctx_);
+    auto* ctx = builtin_ctx_;
 
     // Find a free input buffer.
     v4l2_buffer buf{}; v4l2_plane plane{};
@@ -345,7 +359,7 @@ bool Encoder::submit_builtin(const uint8_t* y, const uint8_t* u, const uint8_t* 
 }
 
 void Encoder::close_builtin() {
-    auto* ctx = bctx_from(avfmt_ctx_);
+    auto* ctx = builtin_ctx_;
     if (!ctx) return;
 
     int type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
@@ -363,5 +377,5 @@ void Encoder::close_builtin() {
     avformat_free_context(ctx->fmtctx);
 
     delete ctx;
-    avfmt_ctx_ = 0;
+    builtin_ctx_ = nullptr;
 }

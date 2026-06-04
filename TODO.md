@@ -13,16 +13,6 @@
       the configured format is actually YUV420 before starting the loop, and log a clear
       error if not.
 
-- [ ] **V4L2 encoder device node** — confirmed `/dev/video11` is bcm2835-codec-encode on Pi OS.
-      However, auto-detection is safer: open each `/dev/videoX`, call `VIDIOC_QUERYCAP`,
-      check `driver == "bcm2835-codec"` and `capabilities & V4L2_CAP_VIDEO_M2M_MPLANE`.
-
-- [ ] **`ApertureValue` control** — not confirmed present in libcamera v0.5.2. Pi cameras
-      have fixed aperture so this control likely does not exist. The guard in `camera.cpp`
-      (`cam_->controls().count(controls::ApertureValue.id())`) is the right pattern but needs
-      the correct API: use `cam_->controls().count(&controls::ApertureValue)` or check
-      availability from the camera's reported ControlInfoMap before using it.
-
 - [ ] **`pi` user group membership** — add `pi` to the `video` and `render` groups in
       `stage3/01-run.sh` so the camera and DRM device nodes are accessible without root.
       Without this the app will fail to open `/dev/video*` and the DRM display.
