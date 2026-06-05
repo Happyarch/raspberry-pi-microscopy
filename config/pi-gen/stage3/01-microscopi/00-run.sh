@@ -1,8 +1,11 @@
 #!/bin/bash -e
 # Runs inside the pi-gen chroot to set up the microscopi system.
 
-# ---- Install compiled binary and assets ----
-USRLOCAL="${STAGE_DIR}/files/usr/local"
+# STAGE_DIR is the stage root (stage3-microscopi/), not this substage dir.
+# Use $0 to find our own files directory reliably.
+SUBSTAGE_DIR="$(dirname "$(realpath "$0")")"
+USRLOCAL="${SUBSTAGE_DIR}/files/usr/local"
+FILES_DIR="${SUBSTAGE_DIR}/files"
 
 echo "==> stage3-microscopi: installing from ${USRLOCAL}"
 ls -la "${USRLOCAL}/bin/" || { echo "ERROR: ${USRLOCAL}/bin/ not found — did build-app.sh run?"; exit 1; }
@@ -26,7 +29,7 @@ install -m 644 "${USRLOCAL}/etc/microscopi.conf" \
 
 # ---- systemd service ----
 install -d "${ROOTFS_DIR}/etc/systemd/system"
-install -m 644 "${STAGE_DIR}/files/microscopi.service" \
+install -m 644 "${FILES_DIR}/microscopi.service" \
                "${ROOTFS_DIR}/etc/systemd/system/microscopi.service"
 
 on_chroot << EOF
@@ -35,7 +38,7 @@ EOF
 
 # ---- Autologin for user microscopi on tty1 ----
 install -d "${ROOTFS_DIR}/etc/systemd/system/getty@tty1.service.d"
-install -m 644 "${STAGE_DIR}/files/autologin.conf" \
+install -m 644 "${FILES_DIR}/autologin.conf" \
                "${ROOTFS_DIR}/etc/systemd/system/getty@tty1.service.d/autologin.conf"
 
 # ---- User accounts ----
@@ -61,4 +64,4 @@ apt-get remove -y userconf-pi 2>/dev/null || dpkg --remove userconf-pi 2>/dev/nu
 EOF
 
 # ---- boot/firmware/config.txt additions ----
-cat "${STAGE_DIR}/files/config.txt.append" >> "${ROOTFS_DIR}/boot/firmware/config.txt"
+cat "${FILES_DIR}/config.txt.append" >> "${ROOTFS_DIR}/boot/firmware/config.txt"
