@@ -38,7 +38,7 @@ cp -r "$REPO_ROOT/config/pi-gen/stage3" "$PIGEN_DIR/stage3-microscopi"
 # Install the debug binary (with symbols) under files/usr/local/.
 STAGE3_FILES="$PIGEN_DIR/stage3-microscopi/01-microscopi/files"
 mkdir -p "$STAGE3_FILES"
-cp -r "$DEPLOY_DIR/install-debug/usr/local" "$STAGE3_FILES/"
+cp -r "$DEPLOY_DIR/install-debug/usr" "$STAGE3_FILES/"
 
 echo "==> Copying stage3-debug..."
 rm -rf "$PIGEN_DIR/stage3-debug"

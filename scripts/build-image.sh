@@ -35,7 +35,7 @@ cp -r "$STAGE3_SRC" "$PIGEN_DIR/stage3-microscopi"
 # Copy compiled artifacts into stage3 files directory.
 STAGE3_FILES="$PIGEN_DIR/stage3-microscopi/01-microscopi/files"
 mkdir -p "$STAGE3_FILES"
-cp -r "$DEPLOY_DIR/install/usr/local" "$STAGE3_FILES/"
+cp -r "$DEPLOY_DIR/install/usr" "$STAGE3_FILES/"
 
 echo "==> Running pi-gen build (Docker mode — no root required; takes 20–40 minutes)..."
 PIGEN_LINK="/tmp/microscopi-pi-gen-$$"
