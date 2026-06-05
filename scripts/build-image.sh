@@ -9,7 +9,7 @@ PIGEN_DIR="$DEPLOY_DIR/pi-gen"
 STAGE3_SRC="$REPO_ROOT/config/pi-gen/stage3"
 
 if [[ ! -f "$DEPLOY_DIR/install/usr/local/bin/microscopy" ]]; then
-    echo "ERROR: Run scripts/build-app.sh first to build the binary."
+    echo "ERROR: Run scripts/build-app.sh first (binary not found at deploy/install/usr/local/bin/microscopy)."
     exit 1
 fi
 
@@ -35,11 +35,11 @@ cp -r "$STAGE3_SRC" "$PIGEN_DIR/stage3-microscopy"
 # Copy compiled artifacts into stage3 files directory.
 STAGE3_FILES="$PIGEN_DIR/stage3-microscopy/files"
 mkdir -p "$STAGE3_FILES"
-cp -r "$DEPLOY_DIR/install/"* "$STAGE3_FILES/"
+cp -r "$DEPLOY_DIR/install/usr/local" "$STAGE3_FILES/"
 
-echo "==> Running pi-gen build (this takes 20–40 minutes)..."
+echo "==> Running pi-gen build (Docker mode — no root required; takes 20–40 minutes)..."
 cd "$PIGEN_DIR"
-CLEAN=1 ./build.sh
+CLEAN=1 ./build-docker.sh
 
 echo "==> Image ready in $PIGEN_DIR/deploy/"
 ls -lh "$PIGEN_DIR/deploy/"

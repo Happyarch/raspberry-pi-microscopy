@@ -12,7 +12,18 @@
 #include <cstring>
 #include <cmath>
 
-using namespace libcamera;
+// Import libcamera names selectively — do NOT import libcamera::Camera since
+// it clashes with our own Camera class defined in camera.h.
+using libcamera::CameraManager;
+using libcamera::CameraConfiguration;
+using libcamera::FrameBufferAllocator;
+using libcamera::Request;
+using libcamera::ControlList;
+using libcamera::StreamRole;
+using libcamera::FrameBuffer;
+using libcamera::Span;
+namespace controls = libcamera::controls;
+namespace formats  = libcamera::formats;
 
 Camera::Camera(int index) : index_(index) {
     mgr_ = std::make_shared<CameraManager>();
@@ -55,8 +66,10 @@ bool Camera::start(int width, int height, int fps) {
     if (allocator_->allocate(stream) < 0) return false;
 
     ControlList controls(cam_->controls());
+    const int64_t frame_usec = 1000000 / fps;
+    const int64_t dur_limits[2] = {frame_usec, frame_usec};
     controls.set(controls::FrameDurationLimits,
-                 Span<const int64_t, 2>({1000000 / fps, 1000000 / fps}));
+                 Span<const int64_t, 2>(dur_limits));
     controls.set(controls::AeEnable, true);
     controls.set(controls::AfMode, controls::AfModeContinuous);
 
@@ -171,7 +184,25 @@ bool Camera::get_frame(CameraFrame& out) {
 }
 
 void Camera::enqueue_request(Request* req) {
-    if (running_) cam_->queueRequest(req);
+    if (!running_) return;
+    {
+        std::lock_guard<std::mutex> lk(pending_mutex_);
+        if (pending_controls_ && !pending_controls_->empty()) {
+            req->controls().merge(*pending_controls_);
+            pending_controls_->clear();
+        }
+    }
+    cam_->queueRequest(req);
+}
+
+// Helper called by set_*() methods to lazily init and update pending controls.
+static void queue_control(std::mutex& mtx,
+                          std::unique_ptr<libcamera::ControlList>& list,
+                          const libcamera::ControlInfoMap& info_map,
+                          std::function<void(libcamera::ControlList&)> fn) {
+    std::lock_guard<std::mutex> lk(mtx);
+    if (!list) list = std::make_unique<libcamera::ControlList>(info_map);
+    fn(*list);
 }
 
 bool Camera::capture_still(const std::string& path) {
@@ -205,18 +236,16 @@ bool Camera::capture_still(const std::string& path) {
 }
 
 void Camera::set_ae_enable(bool enable) {
-    ControlList ctrls(cam_->controls());
-    ctrls.set(controls::AeEnable, enable);
-    cam_->setControls(ctrls);
+    queue_control(pending_mutex_, pending_controls_, cam_->controls(),
+                  [enable](ControlList& c){ c.set(controls::AeEnable, enable); });
     std::lock_guard<std::mutex> lk(status_mutex_);
     status_.ae_enabled = enable;
 }
 
 void Camera::set_af_enable(bool enable) {
-    ControlList ctrls(cam_->controls());
-    ctrls.set(controls::AfMode,
-              enable ? controls::AfModeContinuous : controls::AfModeManual);
-    cam_->setControls(ctrls);
+    auto mode = enable ? controls::AfModeContinuous : controls::AfModeManual;
+    queue_control(pending_mutex_, pending_controls_, cam_->controls(),
+                  [mode](ControlList& c){ c.set(controls::AfMode, mode); });
     std::lock_guard<std::mutex> lk(status_mutex_);
     status_.af_enabled = enable;
     if (enable)
@@ -225,25 +254,19 @@ void Camera::set_af_enable(bool enable) {
 
 void Camera::set_lens_position(float pos) {
     pos = std::clamp(pos, 0.0f, 1.0f);
-    ControlList ctrls(cam_->controls());
-    ctrls.set(controls::AfMode, controls::AfModeManual);
-    ctrls.set(controls::LensPosition, pos);
-    cam_->setControls(ctrls);
+    queue_control(pending_mutex_, pending_controls_, cam_->controls(),
+                  [pos](ControlList& c){
+                      c.set(controls::AfMode, controls::AfModeManual);
+                      c.set(controls::LensPosition, pos);
+                  });
     std::lock_guard<std::mutex> lk(status_mutex_);
     status_.af_enabled    = false;
     status_.lens_position = pos;
 }
 
 void Camera::set_aperture(float fstop) {
-    // ApertureValue is only present on lenses that expose it (not Pi cameras).
-    // ControlInfoMap::count() takes a const ControlId* per the libcamera API.
-    if (cam_->controls().count(&controls::ApertureValue)) {
-        ControlList ctrls(cam_->controls());
-        ctrls.set(controls::ApertureValue, fstop);
-        cam_->setControls(ctrls);
-    }
-    // Always update the OSD value even if the lens is fixed-aperture,
-    // so manual aperture notation still shows in the display.
+    // Pi cameras have fixed aperture; ApertureValue control does not exist in
+    // libcamera 0.0.3 (Debian Bookworm). Track the value only for OSD display.
     std::lock_guard<std::mutex> lk(status_mutex_);
     status_.aperture = fstop;
 }

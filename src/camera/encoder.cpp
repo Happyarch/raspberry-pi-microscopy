@@ -18,9 +18,9 @@ extern "C" {
 #include <cstring>
 #include <cstdlib>
 #include <stdexcept>
+#include <iostream>
 #include <string>
 #include <vector>
-#include <regex>
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -91,21 +91,21 @@ bool Encoder::open_ffmpeg(const std::string& path) {
     if (pipe(pipefd) != 0) return false;
 
     pid_t pid = fork();
-    if (pid < 0) { close(pipefd[0]); close(pipefd[1]); return false; }
+    if (pid < 0) { ::close(pipefd[0]); ::close(pipefd[1]); return false; }
 
     if (pid == 0) {
         // Child: stdin = read end of pipe.
         dup2(pipefd[0], STDIN_FILENO);
-        close(pipefd[0]);
-        close(pipefd[1]);
+        ::close(pipefd[0]);
+        ::close(pipefd[1]);
         // Redirect stderr to /dev/null to keep the UI clean.
         int devnull = ::open("/dev/null", O_WRONLY);
-        if (devnull >= 0) { dup2(devnull, STDERR_FILENO); close(devnull); }
+        if (devnull >= 0) { dup2(devnull, STDERR_FILENO); ::close(devnull); }
         execl("/bin/sh", "sh", "-c", cmd.c_str(), nullptr);
         _exit(1);
     }
 
-    close(pipefd[0]);
+    ::close(pipefd[0]);
     ffmpeg_stdin_ = pipefd[1];
     ffmpeg_pid_   = pid;
     return true;
@@ -131,7 +131,7 @@ bool Encoder::submit_ffmpeg(const uint8_t* y, const uint8_t* u, const uint8_t* v
 
 void Encoder::close_ffmpeg() {
     if (ffmpeg_stdin_ >= 0) { ::close(ffmpeg_stdin_); ffmpeg_stdin_ = -1; }
-    if (ffmpeg_pid_ > 0)    { waitpid(ffmpeg_pid_, nullptr, 0); ffmpeg_pid_ = -1; }
+    if (ffmpeg_pid_ > 0)    { waitpid(ffmpeg_pid_, nullptr, 0); ffmpeg_pid_ = -1; }  // NOLINT
 }
 
 // ---------------------------------------------------------------------------

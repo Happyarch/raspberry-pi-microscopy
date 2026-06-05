@@ -69,12 +69,14 @@ install(TARGETS microscopy
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 install(DIRECTORY assets/icons/
-    DESTINATION /usr/local/share/microscopy/icons
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/microscopy/icons
     FILES_MATCHING PATTERN "*.svg")
 
 install(FILES assets/fonts/RobotoCondensed-Regular.ttf
-    DESTINATION /usr/local/share/microscopy/fonts)
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/microscopy/fonts)
 
+# Default config goes into sysconfdir (e.g. /usr/local/etc or /etc
+# depending on prefix). stage3/01-run.sh copies it to /etc/microscopy.conf.
 install(FILES config/microscopy.conf
-    DESTINATION /etc
+    DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}
     RENAME microscopy.conf)

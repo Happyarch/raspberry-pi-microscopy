@@ -72,8 +72,13 @@ private:
     mutable std::mutex              frame_mutex_;
     std::queue<libcamera::Request*> ready_frames_;
 
-    mutable std::mutex   status_mutex_;
-    CameraStatus         status_{};
+    mutable std::mutex        status_mutex_;
+    CameraStatus              status_{};
+
+    // Controls queued by set_*() calls, merged into the next outgoing request.
+    // Initialised lazily from cam_->controls() on first use.
+    std::mutex                          pending_mutex_;
+    std::unique_ptr<libcamera::ControlList> pending_controls_;
 
     bool running_{false};
 };

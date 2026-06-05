@@ -2,21 +2,25 @@
 # Runs inside the pi-gen chroot to set up the microscopy system.
 
 # ---- Install compiled binary and assets ----
+# The build places everything under usr/local/ (matching CMAKE_INSTALL_PREFIX).
+USRLOCAL="${STAGE_DIR}/files/usr/local"
+
 install -d "${ROOTFS_DIR}/usr/local/bin"
 install -d "${ROOTFS_DIR}/usr/local/share/microscopy/icons"
 install -d "${ROOTFS_DIR}/usr/local/share/microscopy/fonts"
 install -d "${ROOTFS_DIR}/etc"
 
-install -m 755 "${STAGE_DIR}/files/usr/local/bin/microscopy" \
+install -m 755 "${USRLOCAL}/bin/microscopy" \
                "${ROOTFS_DIR}/usr/local/bin/microscopy"
 
-cp "${STAGE_DIR}/files/usr/local/share/microscopy/icons/"*.svg \
+cp "${USRLOCAL}/share/microscopy/icons/"*.svg \
    "${ROOTFS_DIR}/usr/local/share/microscopy/icons/"
 
-cp "${STAGE_DIR}/files/usr/local/share/microscopy/fonts/"*.ttf \
+cp "${USRLOCAL}/share/microscopy/fonts/"*.ttf \
    "${ROOTFS_DIR}/usr/local/share/microscopy/fonts/"
 
-install -m 644 "${STAGE_DIR}/files/etc/microscopy.conf" \
+# Config: CMake installs it to ${prefix}/etc; copy to system /etc/.
+install -m 644 "${USRLOCAL}/etc/microscopy.conf" \
                "${ROOTFS_DIR}/etc/microscopy.conf"
 
 # ---- systemd service ----

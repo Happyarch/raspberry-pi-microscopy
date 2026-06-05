@@ -8,7 +8,7 @@ DEPLOY_DIR="$REPO_ROOT/deploy"
 PIGEN_DIR="$DEPLOY_DIR/pi-gen"
 
 if [[ ! -f "$DEPLOY_DIR/install-debug/usr/local/bin/microscopy" ]]; then
-    echo "ERROR: Run scripts/build-app-debug.sh first."
+    echo "ERROR: Run scripts/build-app-debug.sh first (binary not found at deploy/install-debug/usr/local/bin/microscopy)."
     exit 1
 fi
 
@@ -35,10 +35,10 @@ EOF
 echo "==> Copying stage3-microscopy..."
 rm -rf "$PIGEN_DIR/stage3-microscopy"
 cp -r "$REPO_ROOT/config/pi-gen/stage3" "$PIGEN_DIR/stage3-microscopy"
-# Install the debug binary (with symbols).
+# Install the debug binary (with symbols) under files/usr/local/.
 STAGE3_FILES="$PIGEN_DIR/stage3-microscopy/files"
 mkdir -p "$STAGE3_FILES"
-cp -r "$DEPLOY_DIR/install-debug/"* "$STAGE3_FILES/"
+cp -r "$DEPLOY_DIR/install-debug/usr/local" "$STAGE3_FILES/"
 
 echo "==> Copying stage3-debug..."
 rm -rf "$PIGEN_DIR/stage3-debug"
@@ -51,9 +51,9 @@ for s in 3 4 5; do
 done
 rm -f "$PIGEN_DIR/stage2/SKIP_IMAGES"
 
-echo "==> Running pi-gen build..."
+echo "==> Running pi-gen build (Docker mode — no root required)..."
 cd "$PIGEN_DIR"
-CLEAN=1 ./build.sh
+CLEAN=1 ./build-docker.sh
 
 echo "==> Debug image ready in $PIGEN_DIR/deploy/"
 ls -lh "$PIGEN_DIR/deploy/"*debug* 2>/dev/null || ls -lh "$PIGEN_DIR/deploy/"

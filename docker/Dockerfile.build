@@ -1,12 +1,28 @@
 FROM arm64v8/debian:bookworm
 
-# Install build tools and all ARM64 runtime + dev libraries.
+# Add the Raspberry Pi apt repository so we build against the same libcamera
+# version that ships in Pi OS Bookworm (0.2.x+), not the older Debian package
+# (0.0.3). The Pi fork has Camera::setControls(), AfMode, LensPosition, etc.
 RUN apt-get update && apt-get install -y --no-install-recommends \
+        gnupg curl ca-certificates \
+ && curl -fsSL https://archive.raspberrypi.com/debian/raspberrypi.gpg.key \
+    | gpg --dearmor -o /usr/share/keyrings/raspberrypi-archive-keyring.gpg \
+ && echo "deb [signed-by=/usr/share/keyrings/raspberrypi-archive-keyring.gpg] \
+http://archive.raspberrypi.com/debian/ bookworm main" \
+    > /etc/apt/sources.list.d/raspberrypi.list \
+ && apt-get update
+
+# Pin libcamera* to come from the Pi repo, not Debian.
+RUN printf 'Package: libcamera* python3-libcamera\nPin: origin archive.raspberrypi.com\nPin-Priority: 1001\n' \
+    > /etc/apt/preferences.d/libcamera-pi
+
+# Install build tools and all ARM64 runtime + dev libraries.
+RUN apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     pkg-config \
     git \
-    # Camera
+    # Camera (Pi fork — includes setControls, AfMode, LensPosition)
     libcamera-dev \
     libcamera-ipa \
     # Display / UI
@@ -17,9 +33,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libavformat-dev \
     libavcodec-dev \
     libavutil-dev \
-    # SVG rendering at runtime (rsvg-convert used by the app itself at startup)
+    # SVG rendering at runtime
     librsvg2-bin \
-    # Font (Roboto Condensed)
+    # Font
     fonts-roboto \
  && rm -rf /var/lib/apt/lists/*
 
@@ -27,10 +43,13 @@ WORKDIR /src
 COPY . .
 
 ARG CMAKE_BUILD_TYPE=Release
+ARG JOBS=8
+# Install prefix is /usr/local so the extracted tree maps directly to where
+# files live on the Pi. Extract with: docker cp container:/usr/local/. deploy/
 RUN cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
-        -DCMAKE_INSTALL_PREFIX=/install \
-    && cmake --build build --parallel $(nproc) \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+    && cmake --build build --parallel ${JOBS} \
     && cmake --install build
 
 # Output: /install contains the compiled binary, icons, font, and default config.
