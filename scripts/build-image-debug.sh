@@ -52,8 +52,13 @@ done
 rm -f "$PIGEN_DIR/stage2/SKIP_IMAGES"
 
 echo "==> Running pi-gen build (Docker mode — no root required)..."
-cd "$PIGEN_DIR"
+# pi-gen's build-docker.sh breaks on paths containing spaces. Use a symlink.
+PIGEN_LINK="/tmp/microscopy-pi-gen-$$"
+ln -sfn "$PIGEN_DIR" "$PIGEN_LINK"
+cd "$PIGEN_LINK"
 CLEAN=1 ./build-docker.sh
+cd "$REPO_ROOT"
+rm -f "$PIGEN_LINK"
 
 echo "==> Debug image ready in $PIGEN_DIR/deploy/"
 ls -lh "$PIGEN_DIR/deploy/"*debug* 2>/dev/null || ls -lh "$PIGEN_DIR/deploy/"

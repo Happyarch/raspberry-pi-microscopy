@@ -38,8 +38,12 @@ mkdir -p "$STAGE3_FILES"
 cp -r "$DEPLOY_DIR/install/usr/local" "$STAGE3_FILES/"
 
 echo "==> Running pi-gen build (Docker mode — no root required; takes 20–40 minutes)..."
-cd "$PIGEN_DIR"
+PIGEN_LINK="/tmp/microscopy-pi-gen-$$"
+ln -sfn "$PIGEN_DIR" "$PIGEN_LINK"
+cd "$PIGEN_LINK"
 CLEAN=1 ./build-docker.sh
+cd "$REPO_ROOT"
+rm -f "$PIGEN_LINK"
 
 echo "==> Image ready in $PIGEN_DIR/deploy/"
 ls -lh "$PIGEN_DIR/deploy/"
