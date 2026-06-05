@@ -18,7 +18,7 @@ namespace fs = std::filesystem;
 
 static std::string user_config_path() {
     const char* home = std::getenv("HOME");
-    return home ? std::string(home) + "/.config/microscopy.conf" : "";
+    return home ? std::string(home) + "/.config/microscopi.conf" : "";
 }
 
 static std::string find_config() {
@@ -26,7 +26,7 @@ static std::string find_config() {
     std::string user = user_config_path();
     if (!user.empty() && fs::exists(user)) return user;
     // Fall back to system config.
-    if (fs::exists("/etc/microscopy.conf")) return "/etc/microscopy.conf";
+    if (fs::exists("/etc/microscopi.conf")) return "/etc/microscopi.conf";
     return "";
 }
 
@@ -78,9 +78,9 @@ int main() {
     // ---- OSD ----
     const char* home       = std::getenv("HOME");
     std::string home_str   = home ? home : "/root";
-    std::string cache_dir  = ensure_dir(home_str + "/.cache/microscopy");
-    std::string icons_dir  = "/usr/local/share/microscopy/icons";
-    std::string font_path  = "/usr/local/share/microscopy/fonts/RobotoCondensed-Regular.ttf";
+    std::string cache_dir  = ensure_dir(home_str + "/.cache/microscopi");
+    std::string icons_dir  = "/usr/local/share/microscopi/icons";
+    std::string font_path  = "/usr/local/share/microscopi/fonts/RobotoCondensed-Regular.ttf";
 
     Osd osd(renderer.sdl_renderer(), res.width, res.height,
             icons_dir, font_path, cache_dir);

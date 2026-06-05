@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the microscopy binary inside a QEMU-emulated ARM64 Docker container.
+# Build the microscopi binary inside a QEMU-emulated ARM64 Docker container.
 # Prerequisites on Arch Linux:
 #   sudo pacman -S qemu-user-static binfmt-qemu-static docker
 #   sudo systemctl restart systemd-binfmt
@@ -7,7 +7,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-IMAGE_TAG="microscopy-builder:latest"
+IMAGE_TAG="microscopi-builder:latest"
 DEPLOY_DIR="$REPO_ROOT/deploy"
 
 echo "==> Building Docker image ($IMAGE_TAG)..."
@@ -30,4 +30,4 @@ docker cp "$CONTAINER:/usr/local/." "$DEPLOY_DIR/install/usr/local/"
 docker rm "$CONTAINER"
 
 echo "==> Done. Artifacts in $DEPLOY_DIR/install/usr/local/"
-echo "    Binary: $DEPLOY_DIR/install/usr/local/bin/microscopy"
+echo "    Binary: $DEPLOY_DIR/install/usr/local/bin/microscopi"

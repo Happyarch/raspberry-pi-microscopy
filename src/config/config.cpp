@@ -16,8 +16,8 @@ static Config defaults() {
     c.builtin_bitrate    = 5000000;
     c.ffmpeg_command     = "ffmpeg -f rawvideo -pix_fmt yuv420p -s {width}x{height}"
                            " -r {fps} -i pipe:0 -c:v h264_v4l2m2m -b:v 5M -f matroska {output}";
-    c.video_dir          = "/home/pi/videos";
-    c.stills_dir         = "/home/pi/stills";
+    c.video_dir          = "/home/microscopi/videos";
+    c.stills_dir         = "/home/microscopi/stills";
     c.camera_index       = 0;
     c.fps                = 30;
     c.initial_ae_enabled = true;
@@ -134,7 +134,7 @@ void write_default_config(const std::string& path) {
         std::cerr << "[config] could not write default config to " << path << "\n";
         return;
     }
-    f << R"(# microscopy.conf — Microscopy camera configuration
+    f << R"(# microscopi.conf — Microscopy camera configuration
 # Generated on first run. Edit as needed.
 # Boolean values accept: true/false, 1/0, yes/no, on/off
 # Bad values are ignored and the built-in default is used instead.
@@ -153,8 +153,8 @@ builtin_bitrate = 5000000
 ffmpeg_command = ffmpeg -f rawvideo -pix_fmt yuv420p -s {width}x{height} -r {fps} -i pipe:0 -c:v h264_v4l2m2m -b:v 5M -f matroska {output}
 
 # Directories for saved stills and videos (created automatically).
-video_dir = /home/pi/videos
-stills_dir = /home/pi/stills
+video_dir = /home/microscopi/videos
+stills_dir = /home/microscopi/stills
 
 [camera]
 # Index of the camera to use (0 = first detected).

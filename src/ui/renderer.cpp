@@ -8,7 +8,7 @@ Renderer::Renderer(int width, int height)
         throw std::runtime_error(std::string("SDL_Init: ") + SDL_GetError());
 
     window_ = SDL_CreateWindow(
-        "microscopy",
+        "microscopi",
         SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
         width, height,
         SDL_WINDOW_FULLSCREEN_DESKTOP);

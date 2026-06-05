@@ -1,0 +1,8 @@
+build/
+deploy/
+.cache/
+.claude/
+*.o
+*.a
+*.so
+.DS_Store

@@ -1,15 +1,15 @@
 [Unit]
-Description=Microscopy Camera Application
+Description=Microscopi Camera Application
 After=local-fs.target
 Wants=local-fs.target
 
 [Service]
-User=pi
-Group=pi
+User=microscopi
+Group=microscopi
 Environment=SDL_VIDEODRIVER=kmsdrm
 Environment=SDL_AUDIODRIVER=dummy
-Environment=HOME=/home/pi
-ExecStart=/usr/local/bin/microscopy
+Environment=HOME=/home/microscopi
+ExecStart=/usr/local/bin/microscopi
 Restart=always
 RestartSec=3
 StandardOutput=journal

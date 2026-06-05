@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.18)
-project(microscopy LANGUAGES CXX)
+project(microscopi LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,7 +21,7 @@ pkg_check_modules(AVUTIL      REQUIRED libavutil)
 # ---------------------------------------------------------------------------
 # Sources
 # ---------------------------------------------------------------------------
-add_executable(microscopy
+add_executable(microscopi
     src/main.cpp
     src/camera/camera.cpp
     src/camera/encoder.cpp
@@ -32,7 +32,7 @@ add_executable(microscopy
     src/util/resolution.cpp
 )
 
-target_include_directories(microscopy PRIVATE
+target_include_directories(microscopi PRIVATE
     src
     ${LIBCAMERA_INCLUDE_DIRS}
     ${SDL2_INCLUDE_DIRS}
@@ -43,7 +43,7 @@ target_include_directories(microscopy PRIVATE
     ${AVUTIL_INCLUDE_DIRS}
 )
 
-target_link_libraries(microscopy PRIVATE
+target_link_libraries(microscopi PRIVATE
     ${LIBCAMERA_LIBRARIES}
     ${SDL2_LIBRARIES}
     ${SDL2_TTF_LIBRARIES}
@@ -53,7 +53,7 @@ target_link_libraries(microscopy PRIVATE
     ${AVUTIL_LIBRARIES}
 )
 
-target_compile_options(microscopy PRIVATE
+target_compile_options(microscopi PRIVATE
     ${LIBCAMERA_CFLAGS_OTHER}
     ${SDL2_CFLAGS_OTHER}
     -Wall -Wextra
@@ -65,18 +65,18 @@ target_compile_options(microscopy PRIVATE
 # ---------------------------------------------------------------------------
 include(GNUInstallDirs)
 
-install(TARGETS microscopy
+install(TARGETS microscopi
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 install(DIRECTORY assets/icons/
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/microscopy/icons
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/microscopi/icons
     FILES_MATCHING PATTERN "*.svg")
 
 install(FILES assets/fonts/RobotoCondensed-Regular.ttf
-    DESTINATION ${CMAKE_INSTALL_DATADIR}/microscopy/fonts)
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/microscopi/fonts)
 
 # Default config goes into sysconfdir (e.g. /usr/local/etc or /etc
-# depending on prefix). stage3/01-run.sh copies it to /etc/microscopy.conf.
-install(FILES config/microscopy.conf
+# depending on prefix). stage3/01-run.sh copies it to /etc/microscopi.conf.
+install(FILES config/microscopi.conf
     DESTINATION ${CMAKE_INSTALL_SYSCONFDIR}
-    RENAME microscopy.conf)
+    RENAME microscopi.conf)

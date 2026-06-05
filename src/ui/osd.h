@@ -49,7 +49,7 @@ private:
 
     std::string icons_dir_;
     std::string font_path_;
-    std::string cache_dir_; // e.g. /home/pi/.cache/microscopy/720
+    std::string cache_dir_; // e.g. /home/microscopi/.cache/microscopi/720
 
     // Sizes computed from display height at construction.
     int bar_h_;   // height of bottom OSD bar
