@@ -1,8 +1,8 @@
-libcamera0
+libcamera0.5
 libcamera-ipa
-libavformat60
-libavcodec60
-libavutil58
+libavformat59
+libavcodec59
+libavutil57
 libsdl2-2.0-0
 libsdl2-ttf-2.0-0
 libsdl2-image-2.0-0
