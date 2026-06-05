@@ -33,7 +33,7 @@ rm -rf "$PIGEN_DIR/stage3-microscopi"
 cp -r "$STAGE3_SRC" "$PIGEN_DIR/stage3-microscopi"
 
 # Copy compiled artifacts into stage3 files directory.
-STAGE3_FILES="$PIGEN_DIR/stage3-microscopi/files"
+STAGE3_FILES="$PIGEN_DIR/stage3-microscopi/01-microscopi/files"
 mkdir -p "$STAGE3_FILES"
 cp -r "$DEPLOY_DIR/install/usr/local" "$STAGE3_FILES/"
 
