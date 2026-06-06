@@ -21,7 +21,7 @@ fi
 cat > "$PIGEN_DIR/config" << 'EOF'
 IMG_NAME="microscopi-pi-debug"
 RELEASE="bookworm"
-DEPLOY_COMPRESSION="xz"
+DEPLOY_COMPRESSION="gz"
 LOCALE_DEFAULT="en_US.UTF-8"
 TARGET_HOSTNAME="microscopi-debug"
 KEYBOARD_KEYMAP="us"
