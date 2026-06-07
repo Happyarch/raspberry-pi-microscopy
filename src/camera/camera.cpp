@@ -316,6 +316,15 @@ CameraStatus Camera::get_status() const {
     return status_;
 }
 
+std::string Camera::model_name() const {
+    // libcamera exposes the sensor model via the Model property.
+    namespace props = libcamera::properties;
+    const auto& p = cam_->properties();
+    if (auto v = p.get(props::Model))
+        return std::string(*v);
+    return {};
+}
+
 ControlRange Camera::shutter_range() const {
     const auto& info = cam_->controls();
     auto it = info.find(&controls::ExposureTime);

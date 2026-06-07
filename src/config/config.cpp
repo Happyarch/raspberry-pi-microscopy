@@ -115,10 +115,11 @@ Config load_config(const std::string& path) {
             else if (key == "initial_ae_enabled") c.initial_ae_enabled = parse_bool (key, val, c.initial_ae_enabled);
             else if (key == "initial_af_enabled") c.initial_af_enabled = parse_bool (key, val, c.initial_af_enabled);
             else if (key == "initial_aperture")   c.initial_aperture   = parse_float(key, val, c.initial_aperture);
-            else if (key == "crop_top")           c.crop_top    = parse_int(key, val, c.crop_top);
-            else if (key == "crop_bottom")        c.crop_bottom = parse_int(key, val, c.crop_bottom);
-            else if (key == "crop_left")          c.crop_left   = parse_int(key, val, c.crop_left);
-            else if (key == "crop_right")         c.crop_right  = parse_int(key, val, c.crop_right);
+            else if (key == "crop_top")            c.crop_top    = parse_int  (key, val, c.crop_top);
+            else if (key == "crop_bottom")         c.crop_bottom = parse_int  (key, val, c.crop_bottom);
+            else if (key == "crop_left")           c.crop_left   = parse_int  (key, val, c.crop_left);
+            else if (key == "crop_right")          c.crop_right  = parse_int  (key, val, c.crop_right);
+            else if (key == "focus_scroll_step")   c.focus_scroll_step = parse_float(key, val, c.focus_scroll_step);
         } else if (section == "display") {
             if      (key == "fallback_width")   c.fallback_width  = parse_int (key, val, c.fallback_width);
             else if (key == "fallback_height")  c.fallback_height = parse_int (key, val, c.fallback_height);
@@ -213,6 +214,10 @@ crop_top    = 0
 crop_bottom = 0
 crop_left   = 0
 crop_right  = 0
+
+# Lens-position delta per mouse scroll notch (range 0.0–1.0).
+# Smaller values give finer focus control; keyboard steps are 0.05.
+focus_scroll_step = 0.01
 
 [display]
 # Fallback resolution if no supported EDID mode is detected via SDL2.

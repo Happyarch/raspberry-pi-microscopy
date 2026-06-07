@@ -18,8 +18,6 @@
       Without this the app will fail to open `/dev/video*` and the DRM display.
 - [ ] **SDL2 kmsdrm on Pi OS Bookworm** — confirm that SDL2 ships with the kmsdrm backend
       enabled in the Bookworm package. If not, build SDL2 from source with `--enable-video-kmsdrm`.
-- [ ] **`microscopi` user group membership** — add `microscopi` to the `video` and `render` groups in
-      `stage3/01-run.sh` so the camera and DRM device nodes are accessible without root.
 - [ ] **Change default root password** before any real deployment (currently `microscopy`).
 
 ## Medium Priority
@@ -46,13 +44,15 @@
 
 ## Low Priority / Future
 
-- [ ] **EXIF metadata on stills** — embed shooting data (aperture, shutter speed, ISO, lens
-      position, camera model, timestamp) into captured JPEGs using libexif or exiv2. The data
-      is already available via `CameraStatus`; ffmpeg's `-metadata` flag or a post-process
-      `exiftool` call are the lowest-friction paths.
-- [ ] **Mouse scroll-wheel focus** — when a USB mouse is connected, map the scroll wheel to
-      manual focus stepping (`SDL_MOUSEWHEEL` event → `set_lens_position` delta). Smaller
-      deltas than the keyboard step (e.g. 0.01 per tick) for smooth control.
+- [x] **EXIF metadata on stills** — implemented: self-contained TIFF/APP1 writer injects
+      aperture, shutter speed, ISO, lens position, camera model, exposure mode, and timestamp
+      into captured JPEGs with no extra library dependencies.
+- [x] **Mouse scroll-wheel focus** — implemented: `SDL_MOUSEWHEEL` steps lens position by
+      `focus_scroll_step` (default 0.01, configurable). Scroll also navigates the camera mode
+      list when it is open.
+- [ ] **Raw / JPEG capture toggle** — allow toggling between JPEG-only, DNG/raw-only, and
+      raw+JPEG (simultaneous). Raw output would use the StillCapture role with DNG encoding
+      via libcamera or ffmpeg. Configurable per-session key or config file option.
 - [ ] **USB webcam / V4L2 backend** — investigate replacing or supplementing libcamera with a
       V4L2 capture path so standard USB webcams (UVC devices) can be used as the image source.
       Useful for cheaper sensors, USB microscope cameras, or host-side development without a

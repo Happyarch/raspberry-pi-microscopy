@@ -22,6 +22,10 @@ struct InputCallbacks {
     std::function<void()>    on_toggle_crosshair;
     std::function<void()>    on_quit;
 
+    // Mouse scroll wheel: +1 = toward macro, -1 = toward infinity (per notch).
+    // Only fires when a mouse is connected; no-op if not set.
+    std::function<void(int)> on_focus_scroll;
+
     // Camera mode list navigation — only fired while mode list is open.
     std::function<void()>    on_cam_mode_up;
     std::function<void()>    on_cam_mode_down;

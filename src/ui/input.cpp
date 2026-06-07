@@ -68,6 +68,20 @@ bool InputHandler::process_events() {
         if (ev.type == SDL_QUIT)
             return false;
 
+        if (ev.type == SDL_MOUSEWHEEL) {
+            if (ev.wheel.y != 0) {
+                int dir = ev.wheel.y > 0 ? 1 : -1;
+                if (mode_list_open_) {
+                    // Scroll navigates the camera mode list.
+                    if (dir > 0) { if (cbs_.on_cam_mode_up)   cbs_.on_cam_mode_up(); }
+                    else         { if (cbs_.on_cam_mode_down) cbs_.on_cam_mode_down(); }
+                } else {
+                    if (cbs_.on_focus_scroll) cbs_.on_focus_scroll(dir);
+                }
+            }
+            continue;
+        }
+
         if (ev.type == SDL_KEYDOWN) {
             bool shift = (ev.key.keysym.mod & KMOD_SHIFT) != 0;
             SDL_Keycode sym = ev.key.keysym.sym;

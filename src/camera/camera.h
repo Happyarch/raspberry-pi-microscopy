@@ -82,6 +82,7 @@ public:
     void set_iso(int iso);               // sets AnalogueGain = iso/100; caller manages AE
 
     CameraStatus get_status() const;
+    std::string  model_name() const; // camera model string from libcamera properties
 
     // Query the live control range reported by the camera after start().
     // Returns available=false if the camera does not expose that control.

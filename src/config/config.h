@@ -43,6 +43,7 @@ struct Config {
     int   crop_bottom{0};
     int   crop_left{0};
     int   crop_right{0};
+    float focus_scroll_step{0.01f}; // lens-position delta (0–1) per mouse scroll notch
 
     // [display]
     int  fallback_width;

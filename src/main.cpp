@@ -4,6 +4,7 @@
 #include "ui/input.h"
 #include "ui/osd.h"
 #include "ui/renderer.h"
+#include "util/exif_writer.h"
 #include "util/exposure.h"
 #include "util/resolution.h"
 
@@ -276,7 +277,31 @@ int main() {
     cbs.on_still = [&]{
         std::string dir  = ensure_dir(cfg.stills_dir);
         std::string path = dir + "/" + timestamp_filename(".jpg");
-        if (camera.capture_still(path)) ++still_count;
+        if (camera.capture_still(path)) {
+            ++still_count;
+            // Inject EXIF with current shooting parameters.
+            CameraStatus st = camera.get_status();
+            ExifParams exif;
+            exif.exposure_us   = st.exposure_time;
+            exif.fstop         = (st.aperture > 0) ? st.aperture : aperture_fs;
+            exif.iso           = (iso != 0) ? iso : st.iso;
+            exif.lens_position = st.lens_position;
+            exif.exposure_mode = mode_idx;
+            exif.camera_model  = camera.model_name();
+            time_t now = time(nullptr);
+            struct tm* tm_info = localtime(&now);
+            char dtbuf[20];
+            strftime(dtbuf, sizeof(dtbuf), "%Y:%m:%d %H:%M:%S", tm_info);
+            exif.datetime = dtbuf;
+            insert_exif(path, exif);
+        }
+    };
+
+    cbs.on_focus_scroll = [&](int dir) {
+        CameraStatus st = camera.get_status();
+        float pos = std::isnan(st.lens_position) ? 0.5f : st.lens_position;
+        camera.set_lens_position(std::clamp(pos + dir * cfg.focus_scroll_step, 0.0f, 1.0f));
+        af_enabled = false;
     };
 
     cbs.on_cam_mode_toggle = [&]{

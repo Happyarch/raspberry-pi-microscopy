@@ -43,6 +43,7 @@ add_executable(microscopi
     src/ui/keybinding.cpp
     src/config/config.cpp
     src/util/resolution.cpp
+    src/util/exif_writer.cpp
 )
 
 target_include_directories(microscopi PRIVATE
