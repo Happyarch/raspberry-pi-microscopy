@@ -21,6 +21,14 @@ struct CameraMode {
     }
 };
 
+// Range of a camera control value, as reported by libcamera.
+// `available` is false when the camera does not expose that control.
+struct ControlRange {
+    float min{0};
+    float max{0};
+    bool  available{false};
+};
+
 struct CameraStatus {
     float aperture;        // f-number (e.g. 2.8); 0 if fixed/unknown
     float exposure_time;   // microseconds
@@ -74,6 +82,12 @@ public:
     void set_iso(int iso);               // sets AnalogueGain = iso/100; caller manages AE
 
     CameraStatus get_status() const;
+
+    // Query the live control range reported by the camera after start().
+    // Returns available=false if the camera does not expose that control.
+    ControlRange shutter_range()  const; // ExposureTime, µs
+    ControlRange gain_range()     const; // AnalogueGain (ISO ≈ gain × 100)
+    ControlRange aperture_range() const; // f-stop; most Pi cameras: available=false
 
     int width()  const { return width_; }
     int height() const { return height_; }

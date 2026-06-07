@@ -99,16 +99,39 @@ int main() {
     std::vector<std::string> cam_mode_labels;
     for (const auto& m : cam_modes) cam_mode_labels.push_back(m.label());
 
-    // Index of the currently running mode.
     auto find_active_mode = [&]() -> int {
         CameraMode cur = camera.current_mode();
         for (int i = 0; i < (int)cam_modes.size(); ++i)
             if (cam_modes[i] == cur) return i;
         return 0;
     };
-    int cam_mode_active   = find_active_mode();
-    int cam_mode_selected = cam_mode_active;
-    bool cam_mode_open    = false;
+    int  cam_mode_active   = find_active_mode();
+    int  cam_mode_selected = cam_mode_active;
+    bool cam_mode_open     = false;
+
+    // ---- Control ladders — built from camera-reported ranges ----
+    // Falls back to the full master table if the camera doesn't expose that control.
+    auto make_shutter_ladder = [&]() -> std::vector<float> {
+        auto r = camera.shutter_range();
+        return r.available
+            ? build_shutter_ladder(r.min, r.max)
+            : std::vector<float>(kShutterMaster.begin(), kShutterMaster.end());
+    };
+    auto make_iso_ladder = [&]() -> std::vector<int> {
+        auto r = camera.gain_range();
+        return r.available
+            ? build_iso_ladder(r.min, r.max)
+            : std::vector<int>(kIsoMaster.begin(), kIsoMaster.end());
+    };
+    auto make_aperture_ladder = [&]() -> std::vector<float> {
+        auto r = camera.aperture_range();
+        return r.available
+            ? build_aperture_ladder(r.min, r.max)
+            : std::vector<float>{}; // empty = fixed-aperture camera
+    };
+    std::vector<float> shutter_ladder  = make_shutter_ladder();
+    std::vector<int>   iso_ladder      = make_iso_ladder();
+    std::vector<float> aperture_ladder = make_aperture_ladder();
 
     // ---- Application state ----
     OsdState   osd_state{};
@@ -120,12 +143,17 @@ int main() {
     bool       should_quit    = false;
 
     // Exposure state
-    ExposureMode mode    = ExposureMode::P;
-    int          mode_idx = 0;          // mirrors mode as int for modular arithmetic
-    float        shutter_us = 16667.0f; // 1/60 s default for S/M
-    int          shutter_step = shutter_index(shutter_us);
-    int          iso          = 0;       // 0 = AUTO
-    int          iso_step     = 0;       // index into kIsoSteps; only used when iso != 0
+    ExposureMode mode      = ExposureMode::P;
+    int          mode_idx  = 0;
+    float        shutter_us   = 16667.0f; // 1/60 s starting point for S/M
+    int          shutter_step = shutter_index(shutter_us, shutter_ladder);
+    int          iso          = 0;        // 0 = AUTO
+    int          iso_step     = 0;
+    float        aperture_fs  = cfg.initial_aperture; // f-stop; 0 = unknown/not set
+    int          aperture_step = aperture_ladder.empty() ? 0
+                               : aperture_index(aperture_fs, aperture_ladder);
+
+    if (aperture_fs > 0.0f) camera.set_aperture(aperture_fs);
 
     // Apply initial camera state.
     camera.set_ae_enable(true);  // start in P mode (full auto)
@@ -176,21 +204,33 @@ int main() {
 
     cbs.on_shutter_up = [&]{
         if (mode == ExposureMode::S || mode == ExposureMode::M) {
-            shutter_step = std::min((int)kShutterSteps.size() - 1, shutter_step + 1);
-            shutter_us   = kShutterSteps[shutter_step];
+            shutter_step = std::min((int)shutter_ladder.size() - 1, shutter_step + 1);
+            shutter_us   = shutter_ladder[shutter_step];
             camera.set_shutter_speed(shutter_us);
         }
     };
     cbs.on_shutter_down = [&]{
         if (mode == ExposureMode::S || mode == ExposureMode::M) {
             shutter_step = std::max(0, shutter_step - 1);
-            shutter_us   = kShutterSteps[shutter_step];
+            shutter_us   = shutter_ladder[shutter_step];
             camera.set_shutter_speed(shutter_us);
         }
     };
 
-    cbs.on_aperture_up   = [&]{ /* fixed aperture on Pi cameras — no-op */ };
-    cbs.on_aperture_down = [&]{ /* fixed aperture on Pi cameras — no-op */ };
+    cbs.on_aperture_up = [&]{
+        if (!aperture_ladder.empty()) {
+            aperture_step = std::min((int)aperture_ladder.size() - 1, aperture_step + 1);
+            aperture_fs   = aperture_ladder[aperture_step];
+            camera.set_aperture(aperture_fs);
+        }
+    };
+    cbs.on_aperture_down = [&]{
+        if (!aperture_ladder.empty()) {
+            aperture_step = std::max(0, aperture_step - 1);
+            aperture_fs   = aperture_ladder[aperture_step];
+            camera.set_aperture(aperture_fs);
+        }
+    };
 
     cbs.on_focus_up = [&]{
         CameraStatus st = camera.get_status();
@@ -207,23 +247,22 @@ int main() {
 
     cbs.on_iso_up = [&]{
         if (iso == 0) {
-            // Exit AUTO: snap to closest step from current camera ISO.
             CameraStatus st = camera.get_status();
-            iso_step = (st.iso > 0) ? iso_index(st.iso) : 0;
+            iso_step = (st.iso > 0) ? iso_index(st.iso, iso_ladder) : 0;
         } else {
-            iso_step = std::min((int)kIsoSteps.size() - 1, iso_step + 1);
+            iso_step = std::min((int)iso_ladder.size() - 1, iso_step + 1);
         }
-        iso = kIsoSteps[iso_step];
+        iso = iso_ladder[iso_step];
         camera.set_iso(iso);
     };
     cbs.on_iso_down = [&]{
         if (iso == 0) {
             CameraStatus st = camera.get_status();
-            iso_step = (st.iso > 0) ? iso_index(st.iso) : 0;
+            iso_step = (st.iso > 0) ? iso_index(st.iso, iso_ladder) : 0;
         } else {
             iso_step = std::max(0, iso_step - 1);
         }
-        iso = kIsoSteps[iso_step];
+        iso = iso_ladder[iso_step];
         camera.set_iso(iso);
     };
 
@@ -263,7 +302,14 @@ int main() {
             renderer.update_texture_size(camera.width(), camera.height());
             cam_mode_active   = find_active_mode();
             cam_mode_selected = cam_mode_active;
-            shutter_step = shutter_index(shutter_us);
+            // Rebuild ladders — ranges can differ per mode on some cameras.
+            shutter_ladder  = make_shutter_ladder();
+            iso_ladder      = make_iso_ladder();
+            aperture_ladder = make_aperture_ladder();
+            shutter_step  = shutter_index(shutter_us, shutter_ladder);
+            iso_step      = iso == 0 ? 0 : iso_index(iso, iso_ladder);
+            aperture_step = aperture_ladder.empty() ? 0
+                          : aperture_index(aperture_fs, aperture_ladder);
         }
     };
 

@@ -315,3 +315,32 @@ CameraStatus Camera::get_status() const {
     std::lock_guard<std::mutex> lk(status_mutex_);
     return status_;
 }
+
+ControlRange Camera::shutter_range() const {
+    const auto& info = cam_->controls();
+    auto it = info.find(&controls::ExposureTime);
+    if (it == info.end()) return {};
+    return {
+        (float)it->second.min().get<int32_t>(),
+        (float)it->second.max().get<int32_t>(),
+        true
+    };
+}
+
+ControlRange Camera::gain_range() const {
+    const auto& info = cam_->controls();
+    auto it = info.find(&controls::AnalogueGain);
+    if (it == info.end()) return {};
+    return {
+        it->second.min().get<float>(),
+        it->second.max().get<float>(),
+        true
+    };
+}
+
+ControlRange Camera::aperture_range() const {
+    // libcamera has no standard aperture control; Pi cameras have fixed aperture.
+    // This returns available=false until a future camera or libcamera version
+    // exposes aperture as a settable control.
+    return {};
+}

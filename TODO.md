@@ -46,6 +46,17 @@
 
 ## Low Priority / Future
 
+- [ ] **EXIF metadata on stills** — embed shooting data (aperture, shutter speed, ISO, lens
+      position, camera model, timestamp) into captured JPEGs using libexif or exiv2. The data
+      is already available via `CameraStatus`; ffmpeg's `-metadata` flag or a post-process
+      `exiftool` call are the lowest-friction paths.
+- [ ] **Mouse scroll-wheel focus** — when a USB mouse is connected, map the scroll wheel to
+      manual focus stepping (`SDL_MOUSEWHEEL` event → `set_lens_position` delta). Smaller
+      deltas than the keyboard step (e.g. 0.01 per tick) for smooth control.
+- [ ] **USB webcam / V4L2 backend** — investigate replacing or supplementing libcamera with a
+      V4L2 capture path so standard USB webcams (UVC devices) can be used as the image source.
+      Useful for cheaper sensors, USB microscope cameras, or host-side development without a
+      Pi camera module.
 - [ ] **Histogram overlay** — add an optional small luminance histogram to the OSD.
 - [ ] **Zoom / digital crop** — let the user zoom in on a region of the sensor using
       libcamera's `ScalerCrop` control.
