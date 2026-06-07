@@ -1,5 +1,6 @@
 #pragma once
 #include <libcamera/libcamera.h>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -8,6 +9,8 @@
 #include <functional>
 
 enum class ExposureMode { P = 0, A = 1, S = 2, M = 3 };
+
+enum class StillFormat { JPEG, RAW, JPEG_RAW };
 
 struct CameraMode {
     int         width;
@@ -64,7 +67,11 @@ public:
     // Returns false if the camera was stopped.
     bool get_frame(CameraFrame& out);
 
-    bool capture_still(const std::string& path);
+    // Capture a still. Briefly stops the viewfinder, reconfigures to StillCapture
+    // (full sensor resolution), takes one frame, then restarts the viewfinder.
+    // jpeg_path must end in ".jpg"; for RAW-only the raw file replaces ".jpg" with ".raw".
+    bool capture_still(const std::string& jpeg_path,
+                       StillFormat fmt = StillFormat::JPEG);
 
     // Returns all YUV420 resolutions the camera supports, largest first.
     // Safe to call while the camera is running.
@@ -99,6 +106,7 @@ public:
 private:
     void request_complete(libcamera::Request* req);
     void enqueue_request(libcamera::Request* req);
+    void still_complete(libcamera::Request* req);
 
     int index_;
     int width_{0}, height_{0}, fps_{0};
@@ -121,4 +129,9 @@ private:
     std::unique_ptr<libcamera::ControlList> pending_controls_;
 
     bool running_{false};
+
+    // One-shot sync for still capture (used only inside capture_still).
+    mutable std::mutex       still_mutex_;
+    std::condition_variable  still_cv_;
+    libcamera::Request*      still_req_{nullptr};
 };

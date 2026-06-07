@@ -25,9 +25,10 @@
 
 ## Medium Priority
 
-- [ ] **Still capture quality** — `camera.cpp::capture_still` currently saves the viewfinder
-  frame as JPEG. A proper implementation should switch to `StillCapture` role for full
-  sensor resolution. Implement dual-stream (viewfinder + stills) or a brief reconfigure.
+- ✅ **Still capture quality** — implemented: `capture_still` now does a brief reconfigure
+  to `StreamRole::StillCapture` (full sensor resolution), takes one frame, then restarts
+  the viewfinder. The brief pause during still capture is expected and unavoidable on Pi 3
+  without dual-stream; Pi 4+ could be upgraded to dual-stream later (see Option B above).
 
 - [ ] **Still capture during video recording** — pressing Space during recording should save
   a JPEG without interrupting the video stream. Three implementation paths:
@@ -88,9 +89,11 @@
   `focus_scroll_step` (default 0.01, configurable). Scroll also navigates the camera mode
   list when it is open.
 
-- [ ] **Raw / JPEG capture toggle** — allow toggling between JPEG-only, DNG/raw-only, and
-  raw+JPEG (simultaneous). Raw output would use the StillCapture role with DNG encoding
-  via libcamera or ffmpeg. Configurable per-session key or config file option.
+- ✅ **Raw / JPEG capture toggle** — implemented: `capture_format` config key selects
+  `jpeg` (default), `raw`, or `jpeg+raw`. Raw output uses `StreamRole::Raw` (native Bayer
+  at full sensor resolution) saved as `<name>.raw` with a `<name>.raw.meta` sidecar
+  (width, height, pixel format, stride) for decoding with dcraw / darktable / numpy.
+  DNG output (proper metadata + color matrices) remains a future improvement.
 
 - [ ] **USB webcam / V4L2 backend** — investigate replacing or supplementing libcamera with a
   V4L2 capture path so standard USB webcams (UVC devices) can be used as the image source.

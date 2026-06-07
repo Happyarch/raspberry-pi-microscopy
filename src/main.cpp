@@ -135,6 +135,10 @@ int main() {
     std::vector<float> aperture_ladder = make_aperture_ladder();
 
     // ---- Application state ----
+    StillFormat still_fmt = StillFormat::JPEG;
+    if      (cfg.capture_format == "raw")      still_fmt = StillFormat::RAW;
+    else if (cfg.capture_format == "jpeg+raw") still_fmt = StillFormat::JPEG_RAW;
+
     OsdState   osd_state{};
     bool       recording      = false;
     uint64_t   record_start   = 0;
@@ -277,23 +281,25 @@ int main() {
     cbs.on_still = [&]{
         std::string dir  = ensure_dir(cfg.stills_dir);
         std::string path = dir + "/" + timestamp_filename(".jpg");
-        if (camera.capture_still(path)) {
+        if (camera.capture_still(path, still_fmt)) {
             ++still_count;
-            // Inject EXIF with current shooting parameters.
-            CameraStatus st = camera.get_status();
-            ExifParams exif;
-            exif.exposure_us   = st.exposure_time;
-            exif.fstop         = (st.aperture > 0) ? st.aperture : aperture_fs;
-            exif.iso           = (iso != 0) ? iso : st.iso;
-            exif.lens_position = st.lens_position;
-            exif.exposure_mode = mode_idx;
-            exif.camera_model  = camera.model_name();
-            time_t now = time(nullptr);
-            struct tm* tm_info = localtime(&now);
-            char dtbuf[20];
-            strftime(dtbuf, sizeof(dtbuf), "%Y:%m:%d %H:%M:%S", tm_info);
-            exif.datetime = dtbuf;
-            insert_exif(path, exif);
+            // Inject EXIF into the JPEG (not applicable for raw-only).
+            if (still_fmt != StillFormat::RAW) {
+                CameraStatus st = camera.get_status();
+                ExifParams exif;
+                exif.exposure_us   = st.exposure_time;
+                exif.fstop         = (st.aperture > 0) ? st.aperture : aperture_fs;
+                exif.iso           = (iso != 0) ? iso : st.iso;
+                exif.lens_position = st.lens_position;
+                exif.exposure_mode = mode_idx;
+                exif.camera_model  = camera.model_name();
+                time_t now = time(nullptr);
+                struct tm* tm_info = localtime(&now);
+                char dtbuf[20];
+                strftime(dtbuf, sizeof(dtbuf), "%Y:%m:%d %H:%M:%S", tm_info);
+                exif.datetime = dtbuf;
+                insert_exif(path, exif);
+            }
         }
     };
 

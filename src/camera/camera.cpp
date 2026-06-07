@@ -235,34 +235,183 @@ bool Camera::restart_with_mode(const CameraMode& mode) {
     return start(mode.width, mode.height, fps_);
 }
 
-bool Camera::capture_still(const std::string& path) {
-    // Take a high-resolution still by briefly switching to StillCapture role.
-    // For simplicity we save the current viewfinder frame as JPEG using libjpeg.
-    // A full implementation would reconfigure to StillCapture; this captures
-    // the live frame, which is sufficient for microscopy.
-    CameraFrame frame;
-    if (!get_frame(frame)) return false;
+void Camera::still_complete(Request* req) {
+    std::lock_guard<std::mutex> lk(still_mutex_);
+    still_req_ = req;
+    still_cv_.notify_one();
+}
 
-    // Write raw YUV420 to a temp file then call ffmpeg to convert to JPEG.
-    std::string tmp = path + ".yuv";
+// ---------------------------------------------------------------------------
+// Static helpers used only by capture_still
+// ---------------------------------------------------------------------------
+
+static bool still_save_jpeg(const std::string& jpeg_path,
+                            const libcamera::FrameBuffer* buf,
+                            const libcamera::StreamConfiguration& scfg) {
+    int w = (int)scfg.size.width, h = (int)scfg.size.height;
+    int stride = (int)scfg.stride;
+
+    const auto& planes = buf->planes();
+    size_t total = planes.back().offset + planes.back().length;
+    void* p = ::mmap(nullptr, total, PROT_READ, MAP_SHARED, planes[0].fd.get(), 0);
+    if (p == MAP_FAILED) return false;
+
+    const auto* base = static_cast<const uint8_t*>(p);
+    const uint8_t *y_ptr, *u_ptr, *v_ptr;
+    if (planes.size() == 1) {
+        size_t y_size = (size_t)stride * h;
+        y_ptr = base;
+        u_ptr = base + y_size;
+        v_ptr = base + y_size + (size_t)(stride / 2) * (h / 2);
+    } else {
+        y_ptr = base + planes[0].offset;
+        u_ptr = base + planes[1].offset;
+        v_ptr = base + planes[2].offset;
+    }
+
+    std::string tmp = jpeg_path + ".yuv";
+    bool ok = false;
     {
         std::ofstream f(tmp, std::ios::binary);
-        int uv_h = height_ / 2;
-        for (int r = 0; r < height_; ++r)
-            f.write(reinterpret_cast<const char*>(frame.y + r * frame.y_stride), width_);
+        int uv_stride = stride / 2, uv_h = h / 2;
+        for (int r = 0; r < h; ++r)
+            f.write(reinterpret_cast<const char*>(y_ptr + r * stride), w);
         for (int r = 0; r < uv_h; ++r)
-            f.write(reinterpret_cast<const char*>(frame.u + r * frame.uv_stride), width_ / 2);
+            f.write(reinterpret_cast<const char*>(u_ptr + r * uv_stride), w / 2);
         for (int r = 0; r < uv_h; ++r)
-            f.write(reinterpret_cast<const char*>(frame.v + r * frame.uv_stride), width_ / 2);
+            f.write(reinterpret_cast<const char*>(v_ptr + r * uv_stride), w / 2);
+        ok = f.good();
     }
-    frame.release();
+    ::munmap(p, total);
 
-    std::string cmd = "ffmpeg -y -f rawvideo -pix_fmt yuv420p -s " +
-                      std::to_string(width_) + "x" + std::to_string(height_) +
-                      " -i " + tmp + " " + path + " 2>/dev/null";
-    int ret = std::system(cmd.c_str());
-    std::remove(tmp.c_str());
-    return ret == 0;
+    if (ok) {
+        std::string cmd = "ffmpeg -y -f rawvideo -pix_fmt yuv420p -s " +
+                          std::to_string(w) + "x" + std::to_string(h) +
+                          " -i " + tmp + " " + jpeg_path + " 2>/dev/null";
+        ok = (std::system(cmd.c_str()) == 0);
+        std::remove(tmp.c_str());
+    }
+    return ok;
+}
+
+static bool still_save_raw(const std::string& raw_path,
+                           const libcamera::FrameBuffer* buf,
+                           const libcamera::StreamConfiguration& rcfg) {
+    const auto& planes = buf->planes();
+    size_t total = planes.back().offset + planes.back().length;
+    void* p = ::mmap(nullptr, total, PROT_READ, MAP_SHARED, planes[0].fd.get(), 0);
+    if (p == MAP_FAILED) return false;
+
+    const auto* base = static_cast<const uint8_t*>(p);
+    bool ok = false;
+    {
+        std::ofstream f(raw_path, std::ios::binary);
+        for (const auto& pl : planes)
+            f.write(reinterpret_cast<const char*>(base + pl.offset), pl.length);
+        ok = f.good();
+    }
+    if (ok) {
+        // Sidecar with format metadata so the raw bytes can be decoded later
+        // (e.g. dcraw -D -4 -j -t 0, rawtherapee, darktable, or numpy).
+        std::ofstream mf(raw_path + ".meta");
+        mf << "width="  << rcfg.size.width  << "\n"
+           << "height=" << rcfg.size.height << "\n"
+           << "format=" << rcfg.pixelFormat.toString() << "\n"
+           << "stride=" << rcfg.stride      << "\n";
+    }
+    ::munmap(p, total);
+    return ok;
+}
+
+bool Camera::capture_still(const std::string& jpeg_path, StillFormat fmt) {
+    bool want_jpeg = (fmt == StillFormat::JPEG || fmt == StillFormat::JPEG_RAW);
+    bool want_raw  = (fmt == StillFormat::RAW  || fmt == StillFormat::JPEG_RAW);
+
+    // Save viewfinder dimensions before stopping.
+    int saved_w = width_, saved_h = height_, saved_fps = fps_;
+    stop();
+
+    // Build a configuration with the requested roles.
+    // StillCapture (index 0) gives full sensor resolution; Raw (index 0 or 1)
+    // gives native Bayer data.
+    std::vector<StreamRole> roles;
+    if (want_jpeg) roles.push_back(StreamRole::StillCapture);
+    if (want_raw)  roles.push_back(StreamRole::Raw);
+
+    auto scfg = cam_->generateConfiguration(roles);
+    if (!scfg) { start(saved_w, saved_h, saved_fps); return false; }
+
+    if (want_jpeg) {
+        auto& cfg0 = scfg->at(0);
+        cfg0.pixelFormat = formats::YUV420;
+        cfg0.bufferCount = 1;
+        // Leave size at the camera's default (maximum sensor resolution).
+    }
+    // Raw stream: keep whatever format the camera proposes; one buffer is enough.
+    if (want_raw)
+        scfg->at(want_jpeg ? 1 : 0).bufferCount = 1;
+
+    if (scfg->validate() == CameraConfiguration::Invalid ||
+        cam_->configure(scfg.get()) != 0) {
+        start(saved_w, saved_h, saved_fps);
+        return false;
+    }
+
+    // Allocate one buffer per stream.
+    FrameBufferAllocator* alloc = new FrameBufferAllocator(cam_);
+    for (unsigned i = 0; i < scfg->size(); ++i)
+        alloc->allocate(scfg->at(i).stream());
+
+    // Build one request covering all streams.
+    auto req = cam_->createRequest();
+    for (unsigned i = 0; i < scfg->size(); ++i) {
+        auto* s = scfg->at(i).stream();
+        req->addBuffer(s, alloc->buffers(s)[0].get());
+    }
+
+    // Arm the one-shot completion handler.
+    still_req_ = nullptr;
+    cam_->requestCompleted.connect(this, &Camera::still_complete);
+    if (cam_->start() != 0) {
+        cam_->requestCompleted.disconnect(this, &Camera::still_complete);
+        delete alloc;
+        start(saved_w, saved_h, saved_fps);
+        return false;
+    }
+    cam_->queueRequest(req.get());
+
+    // Wait up to 5 seconds for the frame.
+    {
+        std::unique_lock<std::mutex> lk(still_mutex_);
+        still_cv_.wait_for(lk, std::chrono::seconds(5),
+                           [this]{ return still_req_ != nullptr; });
+    }
+
+    cam_->stop();
+    cam_->requestCompleted.disconnect(this, &Camera::still_complete);
+
+    bool ok = false;
+    if (still_req_ && still_req_->status() == Request::RequestComplete) {
+        if (want_jpeg) {
+            ok = still_save_jpeg(jpeg_path,
+                                 still_req_->findBuffer(scfg->at(0).stream()),
+                                 scfg->at(0));
+        }
+        if (want_raw) {
+            int ri = want_jpeg ? 1 : 0;
+            std::string raw_path =
+                jpeg_path.substr(0, jpeg_path.rfind('.')) + ".raw";
+            bool raw_ok = still_save_raw(raw_path,
+                                         still_req_->findBuffer(scfg->at(ri).stream()),
+                                         scfg->at(ri));
+            if (!want_jpeg) ok = raw_ok;
+        }
+    }
+
+    delete alloc;
+    // Restart the viewfinder at the original resolution.
+    start(saved_w, saved_h, saved_fps);
+    return ok;
 }
 
 void Camera::set_ae_enable(bool enable) {
