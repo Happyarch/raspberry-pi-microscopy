@@ -126,6 +126,8 @@ Config load_config(const std::string& path) {
             if      (key == "fallback_width")   c.fallback_width  = parse_int (key, val, c.fallback_width);
             else if (key == "fallback_height")  c.fallback_height = parse_int (key, val, c.fallback_height);
             else if (key == "show_crosshair")   c.show_crosshair  = parse_bool(key, val, c.show_crosshair);
+        } else if (section == "remote") {
+            if (key == "socket_path") c.socket_path = val;
         } else if (section == "keys") {
             using KF = std::string KeyMap::*;
             static const std::unordered_map<std::string, KF> key_fields = {
@@ -264,6 +266,12 @@ crosshair       = c
 quit            = escape
 help            = h
 cam_mode        = v
+
+[remote]
+# Unix socket for headless remote control (e.g. from SSH or scripts).
+# Connect with: socat - UNIX-CONNECT:/run/microscopi/microscopi.sock
+# Set to empty to disable: socket_path =
+socket_path = /run/microscopi/microscopi.sock
 )";
     std::cerr << "[config] wrote default config to " << path << "\n";
 }

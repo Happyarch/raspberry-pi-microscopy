@@ -7,6 +7,7 @@
 #include "util/exif_writer.h"
 #include "util/exposure.h"
 #include "util/resolution.h"
+#include "util/socket_server.h"
 
 #include <SDL2/SDL.h>
 #include <atomic>
@@ -16,6 +17,7 @@
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <thread>
 
@@ -104,6 +106,8 @@ int main() {
                     res.width, res.height, cfg.fps,
                     cfg.builtin_bitrate,
                     cfg.ffmpeg_command);
+
+    SocketServer sock(cfg.socket_path);
 
     // ---- Camera mode list (built once after camera starts) ----
     std::vector<CameraMode>  cam_modes     = camera.get_modes();
@@ -373,6 +377,163 @@ int main() {
 
     InputHandler input(std::move(cbs), cfg.keys);
 
+    // ---- Socket command dispatch ----
+    static const char* kModeNames[] = {"P", "A", "S", "M"};
+
+    auto dispatch_cmd = [&](const std::string& line) -> std::string {
+        std::istringstream ss(line);
+        std::vector<std::string> args;
+        std::string tok;
+        while (ss >> tok) args.push_back(tok);
+        if (args.empty()) return "ERR empty command";
+
+        const auto& verb = args[0];
+
+        if (verb == "ping") return "PONG";
+
+        if (verb == "help")
+            return "OK ping status still record_start record_stop "
+                   "focus(<pos>|up|down) iso(<val>|auto) shutter(<us>) "
+                   "mode(p|a|s|m) af(on|off) ae(on|off) crosshair(on|off) quit";
+
+        if (verb == "status") {
+            CameraStatus st = camera.get_status();
+            std::ostringstream j;
+            j << "{"
+              << "\"mode\":\"" << kModeNames[mode_idx] << "\""
+              << ",\"iso\":"        << (iso != 0 ? iso : st.iso)
+              << ",\"shutter_us\":" << st.exposure_time
+              << ",\"aperture\":"   << st.aperture
+              << ",\"lens_pos\":"   << (std::isnan(st.lens_position) ? -1.0f : st.lens_position)
+              << ",\"af\":"         << (af_enabled  ? "true" : "false")
+              << ",\"ae\":"         << (st.ae_enabled ? "true" : "false")
+              << ",\"recording\":"  << (recording   ? "true" : "false")
+              << ",\"still_count\":" << still_count
+              << ",\"dual_stream\":" << (camera.dual_stream() ? "true" : "false")
+              << "}";
+            return j.str();
+        }
+
+        if (verb == "still") {
+            std::string path = ensure_dir(cfg.stills_dir) + "/" + timestamp_filename(".jpg");
+            if (!camera.capture_still(path, still_fmt)) return "ERR capture failed";
+            ++still_count;
+            if (still_fmt != StillFormat::RAW) {
+                CameraStatus st = camera.get_status();
+                ExifParams exif;
+                exif.exposure_us   = st.exposure_time;
+                exif.fstop         = (st.aperture > 0) ? st.aperture : aperture_fs;
+                exif.iso           = (iso != 0) ? iso : st.iso;
+                exif.lens_position = st.lens_position;
+                exif.exposure_mode = mode_idx;
+                exif.camera_model  = camera.model_name();
+                time_t now = time(nullptr);
+                struct tm* tm_info = localtime(&now);
+                char dtbuf[20];
+                strftime(dtbuf, sizeof(dtbuf), "%Y:%m:%d %H:%M:%S", tm_info);
+                exif.datetime = dtbuf;
+                insert_exif(path, exif);
+            }
+            return "OK " + path;
+        }
+
+        if (verb == "record_start") {
+            if (recording) return "ERR already recording";
+            std::string path = ensure_dir(cfg.video_dir) + "/" + timestamp_filename(".mkv");
+            if (!encoder.open(path)) return "ERR encoder open failed";
+            recording    = true;
+            record_start = SDL_GetTicks64();
+            return "OK " + path;
+        }
+
+        if (verb == "record_stop") {
+            if (!recording) return "ERR not recording";
+            encoder.close();
+            recording = false;
+            return "OK";
+        }
+
+        if (verb == "focus") {
+            if (args.size() < 2) return "ERR usage: focus <0.0-1.0>|up|down";
+            CameraStatus st = camera.get_status();
+            float pos = std::isnan(st.lens_position) ? 0.5f : st.lens_position;
+            if (args[1] == "up") {
+                camera.set_lens_position(std::clamp(pos + cfg.focus_key_step, 0.0f, 1.0f));
+            } else if (args[1] == "down") {
+                camera.set_lens_position(std::clamp(pos - cfg.focus_key_step, 0.0f, 1.0f));
+            } else {
+                try {
+                    float v = std::stof(args[1]);
+                    if (v < 0.0f || v > 1.0f) return "ERR value out of range 0.0-1.0";
+                    camera.set_lens_position(v);
+                } catch (...) { return "ERR invalid value"; }
+            }
+            af_enabled = false;
+            return "OK";
+        }
+
+        if (verb == "iso") {
+            if (args.size() < 2) return "ERR usage: iso <value>|auto";
+            if (args[1] == "auto") {
+                iso = 0; iso_step = 0;
+            } else {
+                try {
+                    int v = std::stoi(args[1]);
+                    iso_step = iso_index(v, iso_ladder);
+                    iso = iso_ladder[iso_step];
+                    camera.set_iso(iso);
+                } catch (...) { return "ERR invalid iso value"; }
+            }
+            return "OK";
+        }
+
+        if (verb == "shutter") {
+            if (args.size() < 2) return "ERR usage: shutter <microseconds>";
+            try {
+                float v = std::stof(args[1]);
+                shutter_us   = v;
+                shutter_step = shutter_index(v, shutter_ladder);
+                camera.set_shutter_speed(v);
+            } catch (...) { return "ERR invalid value"; }
+            return "OK";
+        }
+
+        if (verb == "mode") {
+            if (args.size() < 2) return "ERR usage: mode p|a|s|m";
+            char c = static_cast<char>(std::tolower(static_cast<unsigned char>(args[1][0])));
+            int idx = (c == 'p') ? 0 : (c == 'a') ? 1 : (c == 's') ? 2 : (c == 'm') ? 3 : -1;
+            if (idx < 0) return "ERR unknown mode — use p a s m";
+            apply_mode(static_cast<ExposureMode>(idx));
+            return "OK";
+        }
+
+        if (verb == "af") {
+            if (args.size() < 2) return "ERR usage: af on|off";
+            af_enabled = (args[1] == "on");
+            camera.set_af_enable(af_enabled);
+            return "OK";
+        }
+
+        if (verb == "ae") {
+            if (args.size() < 2) return "ERR usage: ae on|off";
+            camera.set_ae_enable(args[1] == "on");
+            return "OK";
+        }
+
+        if (verb == "crosshair") {
+            if (args.size() < 2) return "ERR usage: crosshair on|off";
+            show_crosshair = (args[1] == "on");
+            return "OK";
+        }
+
+        if (verb == "quit") {
+            should_quit = true;
+            return "OK";
+        }
+
+        return "ERR unknown command: " + verb;
+    };
+
     int cam_fail_count = 0;
 
     // ---- Main loop ----
@@ -392,6 +553,13 @@ int main() {
             renderer.set_crop(cfg.crop_top, cfg.crop_bottom, cfg.crop_left, cfg.crop_right);
             show_crosshair = cfg.show_crosshair;
             std::cerr << "[config] reloaded from " << config_path << "\n";
+        }
+
+        // ---- Unix socket remote control ----
+        {
+            std::string cmd;
+            if (sock.poll(cmd))
+                sock.reply(dispatch_cmd(cmd));
         }
 
         input.set_mode_list_open(cam_mode_open);

@@ -112,8 +112,12 @@
 
 - [ ] **Network streaming** — optional RTSP or HTTP-MJPEG stream for remote viewing.
 
-- [ ] **Headless/remote control** — accept commands via a Unix socket so a companion
-  script or web interface can trigger captures without physical keyboard access.
+- ✅ **Headless/remote control** — Unix domain socket at `/run/microscopi/microscopi.sock`
+  (configurable via `socket_path` in `[remote]` config section). Line-based text protocol;
+  connect with `socat - UNIX-CONNECT:/run/microscopi/microscopi.sock` or `nc -U`.
+  Commands: `ping`, `status` (JSON), `still`, `record_start`, `record_stop`,
+  `focus <pos|up|down>`, `iso <val|auto>`, `shutter <us>`, `mode <p|a|s|m>`,
+  `af on|off`, `ae on|off`, `crosshair on|off`, `quit`, `help`.
 
 - [ ] **Calibration image** — press a key to overlay a reference grid for focus calibration.
 

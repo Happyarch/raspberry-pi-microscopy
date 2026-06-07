@@ -52,6 +52,9 @@ struct Config {
     int  fallback_height;
     bool show_crosshair;        // guide overlay visible at startup
 
+    // [remote]
+    std::string socket_path{"/run/microscopi/microscopi.sock"};
+
     // [keys]
     KeyMap keys;
 };

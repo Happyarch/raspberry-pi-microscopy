@@ -44,6 +44,7 @@ add_executable(microscopi
     src/config/config.cpp
     src/util/resolution.cpp
     src/util/exif_writer.cpp
+    src/util/socket_server.cpp
 )
 
 target_include_directories(microscopi PRIVATE

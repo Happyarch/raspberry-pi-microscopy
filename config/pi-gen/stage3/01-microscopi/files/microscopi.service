@@ -9,6 +9,8 @@ Group=microscopi
 Environment=SDL_VIDEODRIVER=kmsdrm
 Environment=SDL_AUDIODRIVER=dummy
 Environment=HOME=/home/microscopi
+RuntimeDirectory=microscopi
+RuntimeDirectoryMode=0755
 ExecStart=/usr/local/bin/microscopi
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
