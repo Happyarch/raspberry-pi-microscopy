@@ -4,6 +4,7 @@
 #include "ui/input.h"
 #include "ui/osd.h"
 #include "ui/renderer.h"
+#include "util/exposure.h"
 #include "util/resolution.h"
 
 #include <SDL2/SDL.h>
@@ -52,58 +53,6 @@ static std::string timestamp_filename(const std::string& ext) {
     return std::string(buf) + ext;
 }
 
-// ---------------------------------------------------------------------------
-// Shutter speed ladder (microseconds) for S/M mode stepping
-// ---------------------------------------------------------------------------
-
-static const float kShutterSteps[] = {
-    31.25f,    // 1/32000
-    62.5f,     // 1/16000
-    125.0f,    // 1/8000
-    250.0f,    // 1/4000
-    500.0f,    // 1/2000
-    1000.0f,   // 1/1000
-    2000.0f,   // 1/500
-    4000.0f,   // 1/250
-    8333.0f,   // 1/120
-    16667.0f,  // 1/60
-    33333.0f,  // 1/30
-    66667.0f,  // 1/15
-    125000.0f, // 1/8
-    250000.0f, // 1/4
-    500000.0f, // 1/2
-    1000000.0f,// 1"
-    2000000.0f,// 2"
-};
-static constexpr int kShutterStepCount = (int)(sizeof(kShutterSteps) / sizeof(kShutterSteps[0]));
-
-// Returns index of the closest step to current_us.
-static int shutter_index(float current_us) {
-    int best = 0;
-    float best_d = std::abs(current_us - kShutterSteps[0]);
-    for (int i = 1; i < kShutterStepCount; ++i) {
-        float d = std::abs(current_us - kShutterSteps[i]);
-        if (d < best_d) { best_d = d; best = i; }
-    }
-    return best;
-}
-
-// ---------------------------------------------------------------------------
-// ISO ladder
-// ---------------------------------------------------------------------------
-
-static const int kIsoSteps[] = { 100, 200, 400, 800, 1600, 3200, 6400 };
-static constexpr int kIsoStepCount = (int)(sizeof(kIsoSteps) / sizeof(kIsoSteps[0]));
-
-static int iso_index(int current) {
-    int best = 0;
-    int best_d = std::abs(current - kIsoSteps[0]);
-    for (int i = 1; i < kIsoStepCount; ++i) {
-        int d = std::abs(current - kIsoSteps[i]);
-        if (d < best_d) { best_d = d; best = i; }
-    }
-    return best;
-}
 
 // ---------------------------------------------------------------------------
 // main
@@ -210,7 +159,7 @@ int main() {
 
     cbs.on_shutter_up = [&]{
         if (mode == ExposureMode::S || mode == ExposureMode::M) {
-            shutter_step = std::min(kShutterStepCount - 1, shutter_step + 1);
+            shutter_step = std::min((int)kShutterSteps.size() - 1, shutter_step + 1);
             shutter_us   = kShutterSteps[shutter_step];
             camera.set_shutter_speed(shutter_us);
         }
@@ -245,7 +194,7 @@ int main() {
             CameraStatus st = camera.get_status();
             iso_step = (st.iso > 0) ? iso_index(st.iso) : 0;
         } else {
-            iso_step = std::min(kIsoStepCount - 1, iso_step + 1);
+            iso_step = std::min((int)kIsoSteps.size() - 1, iso_step + 1);
         }
         iso = kIsoSteps[iso_step];
         camera.set_iso(iso);

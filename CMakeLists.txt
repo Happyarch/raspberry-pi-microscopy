@@ -6,6 +6,18 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # ---------------------------------------------------------------------------
+# Unit tests (host build — skips the app, does not require libcamera)
+# Run: cmake -S . -B build-tests -DBUILD_TESTS=ON && cmake --build build-tests
+#      ctest --test-dir build-tests --output-on-failure
+# ---------------------------------------------------------------------------
+option(BUILD_TESTS "Build unit tests (host-only, skips the app)" OFF)
+if(BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+    return()
+endif()
+
+# ---------------------------------------------------------------------------
 # Dependencies (pkg-config)
 # ---------------------------------------------------------------------------
 find_package(PkgConfig REQUIRED)
@@ -28,6 +40,7 @@ add_executable(microscopi
     src/ui/renderer.cpp
     src/ui/osd.cpp
     src/ui/input.cpp
+    src/ui/keybinding.cpp
     src/config/config.cpp
     src/util/resolution.cpp
 )

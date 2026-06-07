@@ -48,7 +48,6 @@ private:
         std::function<void()> action;
     };
 
-    static std::pair<SDL_Keycode, bool> parse_binding(const std::string& s);
     void build_bindings(const KeyMap& keys);
 
     InputCallbacks       cbs_;

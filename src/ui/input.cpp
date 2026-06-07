@@ -1,46 +1,6 @@
 #include "input.h"
+#include "keybinding.h"
 #include <algorithm>
-#include <cctype>
-#include <string>
-
-// ---------------------------------------------------------------------------
-// Key name parsing
-// ---------------------------------------------------------------------------
-
-static SDL_Keycode name_to_keycode(const std::string& s) {
-    static const struct { const char* name; SDL_Keycode code; } table[] = {
-        {"up",        SDLK_UP},
-        {"down",      SDLK_DOWN},
-        {"left",      SDLK_LEFT},
-        {"right",     SDLK_RIGHT},
-        {"space",     SDLK_SPACE},
-        {"escape",    SDLK_ESCAPE},
-        {"return",    SDLK_RETURN},
-        {"enter",     SDLK_RETURN},
-        {"tab",       SDLK_TAB},
-        {"backspace", SDLK_BACKSPACE},
-    };
-    for (auto& e : table)
-        if (s == e.name) return e.code;
-    if (s.size() == 1) {
-        char c = s[0];
-        if (c >= 'a' && c <= 'z') return (SDL_Keycode)(SDLK_a + (c - 'a'));
-        if (c >= '0' && c <= '9') return (SDL_Keycode)(SDLK_0 + (c - '0'));
-    }
-    return SDLK_UNKNOWN;
-}
-
-std::pair<SDL_Keycode, bool> InputHandler::parse_binding(const std::string& s) {
-    std::string lower = s;
-    for (auto& c : lower) c = (char)std::tolower((unsigned char)c);
-    bool shift = false;
-    std::string key_part = lower;
-    if (lower.size() > 6 && lower.substr(0, 6) == "shift+") {
-        shift    = true;
-        key_part = lower.substr(6);
-    }
-    return {name_to_keycode(key_part), shift};
-}
 
 // ---------------------------------------------------------------------------
 // Construction — builds the table-driven binding list
@@ -49,7 +9,7 @@ std::pair<SDL_Keycode, bool> InputHandler::parse_binding(const std::string& s) {
 void InputHandler::build_bindings(const KeyMap& keys) {
     auto add = [&](const std::string& binding, bool no_repeat,
                    std::function<void()> action) {
-        auto [sym, shift] = parse_binding(binding);
+        auto [sym, shift] = parse_key_binding(binding);
         if (sym != SDLK_UNKNOWN)
             bindings_.push_back({sym, shift, no_repeat, std::move(action)});
     };
@@ -73,15 +33,15 @@ void InputHandler::build_bindings(const KeyMap& keys) {
     add(keys.crosshair,       true,  [&]{ if (cbs_.on_toggle_crosshair) cbs_.on_toggle_crosshair(); });
 
     // Record and quit are handled separately (hold timers); stash their parsed keys.
-    auto [rsym, rshift] = parse_binding(keys.record);
+    auto [rsym, rshift] = parse_key_binding(keys.record);
     record_sym_         = (rsym != SDLK_UNKNOWN) ? rsym : SDLK_r;
     record_needs_shift_ = rshift;
 
-    auto [qsym, qshift] = parse_binding(keys.quit);
+    auto [qsym, qshift] = parse_key_binding(keys.quit);
     quit_sym_           = (qsym != SDLK_UNKNOWN) ? qsym : SDLK_ESCAPE;
     (void)qshift; // quit binding never requires a modifier
 
-    auto [hsym, hshift] = parse_binding(keys.help);
+    auto [hsym, hshift] = parse_key_binding(keys.help);
     help_sym_           = (hsym != SDLK_UNKNOWN) ? hsym : SDLK_h;
     (void)hshift; // help binding never requires a modifier
 }
