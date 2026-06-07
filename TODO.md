@@ -2,10 +2,8 @@
 
 ## High Priority
 
-- [ ] **SDL texture format bug** — `renderer.cpp` uses `SDL_PIXELFORMAT_YV12` (YVU order) but
-  libcamera delivers YUV420 planar (Y, U, V order). Should be `SDL_PIXELFORMAT_IYUV`.
-  With YV12, U and V planes are swapped, producing wrong chroma (purple/green tint).
-  Fix: change `SDL_PIXELFORMAT_YV12` → `SDL_PIXELFORMAT_IYUV` in `renderer.cpp`.
+- ✅ **SDL texture format bug** — fixed: `renderer.cpp` uses `SDL_PIXELFORMAT_IYUV` (I420,
+  Y then U then V) matching libcamera's YUV420 planar output order.
 
 - [ ] **libcamera Viewfinder format** — confirmed that Viewfinder role defaults to XRGB8888,
   not YUV420. `camera.cpp` already sets `pixelFormat = formats::YUV420` explicitly, which
@@ -60,8 +58,9 @@
   Consider logarithmic half-stop or third-stop increments and clamp to the lens's
   reported `ApertureFpsRange`.
 
-- [ ] **Focus step size** — 0.05 lens-position increments may be too coarse at macro distances.
-  Consider making step size configurable in `microscopi.conf`.
+- ✅ **Focus step size** — implemented: `focus_key_step` config key (default 0.05) sets the
+  lens-position delta per keyboard Up/Down press. Scroll-wheel step remains separately
+  configurable via `focus_scroll_step`.
 
 - [ ] **OSD icon color** — Lucide icons are black by default; they need to be white for the
   dark OSD bar. Either tint via `SDL_SetTextureColorMod(tex, 255, 255, 255)` after inverting,
@@ -70,11 +69,15 @@
 - [ ] **Font weight** — Roboto Condensed [wght] is a variable font. TTF_OpenFont loads at
   default weight (400). Expose weight selection or switch to a static Regular TTF.
 
-- [ ] **Graceful camera re-init** — if the camera is unplugged and re-plugged, the app
-  currently crashes. Add a reconnect loop in `main.cpp`.
+- ✅ **Graceful camera re-init** — implemented: after 30 consecutive `get_frame()` failures,
+  `main.cpp` calls `camera.stop()`, `camera.reconnect()` (releases and re-acquires the
+  libcamera device), then `camera.start()`. Retries every 2 s until the camera returns.
+  Any active recording is closed cleanly before the reconnect attempt.
 
-- [ ] **Config hot-reload** — allow editing `microscopi.conf` and reloading without a restart
-  (e.g., on SIGHUP).
+- ✅ **Config hot-reload** — implemented: `kill -HUP <pid>` (or `systemctl reload microscopi`)
+  reloads `microscopi.conf` at runtime. Hot-reloadable keys: `crop_*`, `focus_scroll_step`,
+  `focus_key_step`, `show_crosshair`, `stills_dir`, `video_dir`. Camera/display/key settings
+  require a full restart.
 
 - [ ] **pi-gen STAGE_LIST** — verify that pi-gen accepts `stage3-microscopy` as a custom stage
   name; the standard convention uses `stage3`. Rename if needed.
@@ -127,14 +130,13 @@
 
 ## Build / CI
 
-- [ ] Set up GitHub Actions workflow to build the Docker image and validate compilation
-  (cannot run on x86_64 without QEMU, but at minimum check the CMake configure step).
+- ✅ **GitHub Actions binary build** — `.github/workflows/build.yml` builds the ARM64 binary
+  via QEMU + Docker Buildx on push to `master` (src/CMakeLists.txt/docker/assets changes)
+  and on `workflow_dispatch`. Uploads the binary as a 14-day artifact.
 
-- [ ] **GitHub Actions full image build** — on push to `main`, run `build-app-debug.sh` then
-  `build-image-debug.sh` via `docker/setup-qemu-action` (ARM64 binfmt on Ubuntu runner).
-  Upload the `.img.gz` to a GitHub Release rather than an artifact (releases allow 2 GB;
-  artifacts cap at 500 MB). Trigger manually via `workflow_dispatch` to avoid burning the
-  2,000 min/month free-tier on every push. Build takes ~40 min per run.
+- [ ] **GitHub Actions full image build** — extend `build.yml` to run `build-image.sh` and
+  upload the `.img.gz` to a GitHub Release (releases allow 2 GB; artifacts cap at 500 MB).
+  Trigger manually via `workflow_dispatch` only — build takes ~40 min per run.
 
 - [ ] Add a `scripts/dev-build.sh` that builds and runs a mock version on the host using
   a USB webcam (V4L2) + X11 backend for iterative UI development without a Pi.

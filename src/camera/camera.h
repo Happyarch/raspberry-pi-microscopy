@@ -62,6 +62,10 @@ public:
     bool start(int width, int height, int fps);
     void stop();
 
+    // Release and re-acquire the camera (e.g. after a physical unplug/replug).
+    // Call stop() first if the camera was running. Returns true if ready for start().
+    bool reconnect();
+
     // Returns the most recently completed viewfinder frame.
     // Blocks briefly (up to ~33ms) if no new frame is ready.
     // Returns false if the camera was stopped.

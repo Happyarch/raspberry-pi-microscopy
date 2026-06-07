@@ -1,0 +1,37 @@
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    paths:
+      - 'src/**'
+      - 'CMakeLists.txt'
+      - 'docker/**'
+      - 'assets/**'
+
+jobs:
+  build-binary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU (ARM64 binfmt)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ARM64 binary
+        run: ./scripts/build-app.sh
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: microscopi-arm64-${{ github.sha }}
+          path: deploy/install/usr/local/bin/microscopi
+          retention-days: 14

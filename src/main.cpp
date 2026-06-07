@@ -9,13 +9,20 @@
 #include "util/resolution.h"
 
 #include <SDL2/SDL.h>
+#include <atomic>
+#include <chrono>
+#include <csignal>
 #include <cstdlib>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <thread>
 
 namespace fs = std::filesystem;
+
+static std::atomic<bool> g_reload_config{false};
+static void handle_sighup(int) { g_reload_config.store(true, std::memory_order_relaxed); }
 
 static std::string user_config_path() {
     const char* home = std::getenv("HOME");
@@ -29,7 +36,7 @@ static std::string find_config() {
     return "";
 }
 
-static Config bootstrap_config() {
+static std::string resolve_config_path() {
     std::string path = find_config();
     if (path.empty()) {
         std::string user = user_config_path();
@@ -38,7 +45,7 @@ static Config bootstrap_config() {
             path = user;
         }
     }
-    return load_config(path);
+    return path;
 }
 
 static std::string ensure_dir(const std::string& path) {
@@ -60,7 +67,10 @@ static std::string timestamp_filename(const std::string& ext) {
 // ---------------------------------------------------------------------------
 
 int main() {
-    Config cfg = bootstrap_config();
+    std::signal(SIGHUP, handle_sighup);
+
+    std::string config_path = resolve_config_path();
+    Config cfg = load_config(config_path);
 
     setenv("SDL_VIDEODRIVER", "kmsdrm", 1);
     setenv("SDL_AUDIODRIVER", "dummy",  1);
@@ -189,6 +199,16 @@ int main() {
         }
     };
 
+    auto rebuild_ladders = [&]{
+        shutter_ladder  = make_shutter_ladder();
+        iso_ladder      = make_iso_ladder();
+        aperture_ladder = make_aperture_ladder();
+        shutter_step  = shutter_index(shutter_us, shutter_ladder);
+        iso_step      = iso == 0 ? 0 : iso_index(iso, iso_ladder);
+        aperture_step = aperture_ladder.empty() ? 0
+                      : aperture_index(aperture_fs, aperture_ladder);
+    };
+
     // ---- Input callbacks ----
     InputCallbacks cbs;
 
@@ -240,13 +260,13 @@ int main() {
     cbs.on_focus_up = [&]{
         CameraStatus st = camera.get_status();
         float pos = std::isnan(st.lens_position) ? 0.5f : st.lens_position;
-        camera.set_lens_position(std::min(1.0f, pos + 0.05f));
+        camera.set_lens_position(std::clamp(pos + cfg.focus_key_step, 0.0f, 1.0f));
         af_enabled = false;
     };
     cbs.on_focus_down = [&]{
         CameraStatus st = camera.get_status();
         float pos = std::isnan(st.lens_position) ? 0.5f : st.lens_position;
-        camera.set_lens_position(std::max(0.0f, pos - 0.05f));
+        camera.set_lens_position(std::clamp(pos - cfg.focus_key_step, 0.0f, 1.0f));
         af_enabled = false;
     };
 
@@ -333,14 +353,7 @@ int main() {
             renderer.update_texture_size(camera.width(), camera.height());
             cam_mode_active   = find_active_mode();
             cam_mode_selected = cam_mode_active;
-            // Rebuild ladders — ranges can differ per mode on some cameras.
-            shutter_ladder  = make_shutter_ladder();
-            iso_ladder      = make_iso_ladder();
-            aperture_ladder = make_aperture_ladder();
-            shutter_step  = shutter_index(shutter_us, shutter_ladder);
-            iso_step      = iso == 0 ? 0 : iso_index(iso, iso_ladder);
-            aperture_step = aperture_ladder.empty() ? 0
-                          : aperture_index(aperture_fs, aperture_ladder);
+            rebuild_ladders();
         }
     };
 
@@ -360,13 +373,49 @@ int main() {
 
     InputHandler input(std::move(cbs), cfg.keys);
 
+    int cam_fail_count = 0;
+
     // ---- Main loop ----
     while (!should_quit) {
+        // ---- SIGHUP config hot-reload ----
+        if (g_reload_config.exchange(false)) {
+            Config nc = load_config(config_path);
+            cfg.crop_top          = nc.crop_top;
+            cfg.crop_bottom       = nc.crop_bottom;
+            cfg.crop_left         = nc.crop_left;
+            cfg.crop_right        = nc.crop_right;
+            cfg.focus_scroll_step = nc.focus_scroll_step;
+            cfg.focus_key_step    = nc.focus_key_step;
+            cfg.show_crosshair    = nc.show_crosshair;
+            cfg.stills_dir        = nc.stills_dir;
+            cfg.video_dir         = nc.video_dir;
+            renderer.set_crop(cfg.crop_top, cfg.crop_bottom, cfg.crop_left, cfg.crop_right);
+            show_crosshair = cfg.show_crosshair;
+            std::cerr << "[config] reloaded from " << config_path << "\n";
+        }
+
         input.set_mode_list_open(cam_mode_open);
         if (!input.process_events()) break;
 
         CameraFrame frame;
-        if (!camera.get_frame(frame)) continue;
+        if (!camera.get_frame(frame)) {
+            // ---- Graceful camera re-init ----
+            if (++cam_fail_count < 30) continue; // tolerate brief stalls
+            cam_fail_count = 0;
+            std::cerr << "[camera] no frames — attempting reconnect\n";
+            if (recording) { encoder.close(); recording = false; }
+            camera.stop();
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+            if (camera.reconnect() && camera.start(rw, rh, cfg.fps)) {
+                rebuild_ladders();
+                cam_mode_active = find_active_mode();
+                std::cerr << "[camera] reconnected\n";
+            } else {
+                std::cerr << "[camera] reconnect failed — will retry\n";
+            }
+            continue;
+        }
+        cam_fail_count = 0;
 
         if (recording)
             encoder.submit_frame(frame.y, frame.u, frame.v,

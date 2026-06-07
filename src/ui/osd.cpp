@@ -43,7 +43,7 @@ Osd::Osd(SDL_Renderer* renderer,
     warn_font_ = TTF_OpenFont(font_path_.c_str(), warn_sz_);
 
     // Pre-load all icons used in the OSD.
-    for (const auto& name : {"aperture", "camera", "crosshair", "circle-dot", "sun"})
+    for (const auto& name : {"aperture", "camera", "crosshair", "circle-dot", "sun", "gauge"})
         icons_[name] = load_icon(name);
 }
 
@@ -421,11 +421,12 @@ void Osd::draw(const OsdState& state) {
 
     // ---- ISO ----
     {
-        std::string iso_str = "ISO ";
-        iso_str += (state.iso == 0) ? "AUTO" : std::to_string(state.iso);
+        std::string iso_val = (state.iso == 0) ? "AUTO" : std::to_string(state.iso);
         bool iso_manual = (state.iso != 0);
-        draw_text(iso_str, cx, text_y, iso_manual ? kWhite : kDim);
-        cx += text_w(iso_str) + pad_ * 2;
+        draw_icon(icons_["gauge"], cx, icon_y, iso_manual ? 255 : 100);
+        cx += icon_sz_ + 4;
+        draw_text(iso_val, cx, text_y, iso_manual ? kWhite : kDim);
+        cx += text_w(iso_val) + pad_ * 2;
     }
 
     // ---- Focus ----

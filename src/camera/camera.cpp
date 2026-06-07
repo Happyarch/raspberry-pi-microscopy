@@ -142,6 +142,20 @@ void Camera::stop() {
     dual_stream_ = false;
 }
 
+bool Camera::reconnect() {
+    if (cam_) { cam_->release(); cam_.reset(); }
+    if (mgr_) { mgr_->stop(); mgr_.reset(); }
+
+    mgr_ = std::make_shared<CameraManager>();
+    if (mgr_->start() != 0) { mgr_.reset(); return false; }
+
+    auto cameras = mgr_->cameras();
+    if (index_ >= (int)cameras.size()) return false;
+    cam_ = cameras[index_];
+    if (cam_->acquire() != 0) { cam_.reset(); return false; }
+    return true;
+}
+
 void Camera::request_complete(Request* req) {
     // In dual-stream mode, still-only requests arrive on this signal too.
     // Detect them by the presence of the still stream buffer, route them to

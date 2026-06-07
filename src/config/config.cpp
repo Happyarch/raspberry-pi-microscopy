@@ -120,6 +120,7 @@ Config load_config(const std::string& path) {
             else if (key == "crop_left")           c.crop_left   = parse_int  (key, val, c.crop_left);
             else if (key == "crop_right")          c.crop_right  = parse_int  (key, val, c.crop_right);
             else if (key == "focus_scroll_step")   c.focus_scroll_step = parse_float(key, val, c.focus_scroll_step);
+            else if (key == "focus_key_step")      c.focus_key_step    = parse_float(key, val, c.focus_key_step);
             else if (key == "capture_format")      c.capture_format    = val;
         } else if (section == "display") {
             if      (key == "fallback_width")   c.fallback_width  = parse_int (key, val, c.fallback_width);
@@ -217,8 +218,10 @@ crop_left   = 0
 crop_right  = 0
 
 # Lens-position delta per mouse scroll notch (range 0.0–1.0).
-# Smaller values give finer focus control; keyboard steps are 0.05.
 focus_scroll_step = 0.01
+
+# Lens-position delta per keyboard Up/Down press (range 0.0–1.0).
+focus_key_step = 0.05
 
 # Still capture format: jpeg, raw, or jpeg+raw.
 # raw saves Bayer data as <name>.raw with a <name>.raw.meta sidecar (width,
