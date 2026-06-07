@@ -13,12 +13,12 @@
       the configured format is actually YUV420 before starting the loop, and log a clear
       error if not.
 
-- [ ] **`pi` user group membership** — add `pi` to the `video` and `render` groups in
+- [ ] **`microscopi` user group membership** — add `microscopi` to the `video` and `render` groups in
       `stage3/01-run.sh` so the camera and DRM device nodes are accessible without root.
       Without this the app will fail to open `/dev/video*` and the DRM display.
 - [ ] **SDL2 kmsdrm on Pi OS Bookworm** — confirm that SDL2 ships with the kmsdrm backend
       enabled in the Bookworm package. If not, build SDL2 from source with `--enable-video-kmsdrm`.
-- [ ] **`pi` user group membership** — add `pi` to the `video` and `render` groups in
+- [ ] **`microscopi` user group membership** — add `microscopi` to the `video` and `render` groups in
       `stage3/01-run.sh` so the camera and DRM device nodes are accessible without root.
 - [ ] **Change default root password** before any real deployment (currently `microscopy`).
 
