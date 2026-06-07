@@ -47,21 +47,54 @@ Camera::~Camera() {
 
 bool Camera::start(int width, int height, int fps) {
     width_ = width; height_ = height; fps_ = fps;
+    dual_stream_ = false;
+    vf_stream_ = still_stream_ = nullptr;
 
-    cfg_ = cam_->generateConfiguration({StreamRole::Viewfinder});
-    if (!cfg_) return false;
+    // Attempt dual-stream (Viewfinder + StillCapture). If the camera or
+    // validate() rejects it, fall back to single Viewfinder.
+    cfg_ = cam_->generateConfiguration({StreamRole::Viewfinder, StreamRole::StillCapture});
+    if (cfg_) {
+        cfg_->at(0).pixelFormat = formats::YUV420;
+        cfg_->at(0).size        = {(unsigned)width, (unsigned)height};
+        cfg_->at(0).bufferCount = 4;
+        cfg_->at(1).pixelFormat = formats::YUV420;
+        cfg_->at(1).bufferCount = 1;
+        if (cfg_->validate() != CameraConfiguration::Invalid)
+            dual_stream_ = true;
+    }
+    if (!dual_stream_) {
+        cfg_ = cam_->generateConfiguration({StreamRole::Viewfinder});
+        if (!cfg_) return false;
+        cfg_->at(0).pixelFormat = formats::YUV420;
+        cfg_->at(0).size        = {(unsigned)width, (unsigned)height};
+        cfg_->at(0).bufferCount = 4;
+        if (cfg_->validate() == CameraConfiguration::Invalid) return false;
+    }
 
-    auto& stream_cfg = cfg_->at(0);
-    stream_cfg.pixelFormat = formats::YUV420;
-    stream_cfg.size        = {(unsigned)width, (unsigned)height};
-    stream_cfg.bufferCount = 4;
-
-    if (cfg_->validate() == CameraConfiguration::Invalid) return false;
     if (cam_->configure(cfg_.get()) != 0) return false;
 
-    allocator_ = new FrameBufferAllocator(cam_);
-    auto* stream = cfg_->at(0).stream();
-    if (allocator_->allocate(stream) < 0) return false;
+    vf_stream_ = cfg_->at(0).stream();
+    allocator_  = new FrameBufferAllocator(cam_);
+    if (allocator_->allocate(vf_stream_) < 0) return false;
+
+    if (dual_stream_) {
+        still_stream_ = cfg_->at(1).stream();
+        still_w_      = (int)cfg_->at(1).size.width;
+        still_h_      = (int)cfg_->at(1).size.height;
+        still_stride_ = (int)cfg_->at(1).stride;
+        still_alloc_  = new FrameBufferAllocator(cam_);
+        if (still_alloc_->allocate(still_stream_) < 0) {
+            delete still_alloc_; still_alloc_ = nullptr;
+            still_stream_ = nullptr;
+            dual_stream_  = false;
+        }
+    }
+
+    std::cerr << "[camera] " << (dual_stream_ ? "dual" : "single") << "-stream "
+              << width << "x" << height << " @ " << fps << " fps";
+    if (dual_stream_)
+        std::cerr << " | still " << still_w_ << "x" << still_h_;
+    std::cerr << "\n";
 
     ControlList controls(cam_->controls());
     const int64_t frame_usec = 1000000 / fps;
@@ -73,15 +106,15 @@ bool Camera::start(int width, int height, int fps) {
 
     {
         std::lock_guard<std::mutex> lk(status_mutex_);
-        status_.ae_enabled   = true;
-        status_.af_enabled   = true;
+        status_.ae_enabled    = true;
+        status_.af_enabled    = true;
         status_.lens_position = std::numeric_limits<float>::quiet_NaN();
     }
 
-    for (auto& buf : allocator_->buffers(stream)) {
+    for (auto& buf : allocator_->buffers(vf_stream_)) {
         auto req = cam_->createRequest();
         if (!req) return false;
-        if (req->addBuffer(stream, buf.get()) != 0) return false;
+        if (req->addBuffer(vf_stream_, buf.get()) != 0) return false;
         req->controls().merge(controls);
         requests_.push_back(std::move(req));
     }
@@ -102,22 +135,33 @@ void Camera::stop() {
     cam_->stop();
     cam_->requestCompleted.disconnect(this, &Camera::request_complete);
     requests_.clear();
-    if (allocator_) {
-        delete allocator_;
-        allocator_ = nullptr;
-    }
+    still_pending_req_.reset();
+    if (allocator_) { delete allocator_; allocator_ = nullptr; }
+    if (still_alloc_) { delete still_alloc_; still_alloc_ = nullptr; }
+    vf_stream_ = still_stream_ = nullptr;
+    dual_stream_ = false;
 }
 
 void Camera::request_complete(Request* req) {
+    // In dual-stream mode, still-only requests arrive on this signal too.
+    // Detect them by the presence of the still stream buffer, route them to
+    // the still capture waiter, and do NOT push them into the viewfinder queue.
+    if (dual_stream_ && still_stream_ && req->findBuffer(still_stream_)) {
+        std::lock_guard<std::mutex> lk(still_mutex_);
+        still_req_ = req;
+        still_cv_.notify_one();
+        return;
+    }
+
     if (req->status() == Request::RequestCancelled) return;
-    // Update metadata from completed request.
+
     const auto& meta = req->metadata();
     {
         std::lock_guard<std::mutex> lk(status_mutex_);
         if (auto v = meta.get(controls::ExposureTime))
             status_.exposure_time = *v;
         if (auto v = meta.get(controls::AnalogueGain))
-            status_.iso = (int)(*v * 100);  // approximate ISO
+            status_.iso = (int)(*v * 100);
         if (auto v = meta.get(controls::LensPosition))
             status_.lens_position = *v;
         if (auto v = meta.get(controls::AeEnable))
@@ -247,9 +291,7 @@ void Camera::still_complete(Request* req) {
 
 static bool still_save_jpeg(const std::string& jpeg_path,
                             const libcamera::FrameBuffer* buf,
-                            const libcamera::StreamConfiguration& scfg) {
-    int w = (int)scfg.size.width, h = (int)scfg.size.height;
-    int stride = (int)scfg.stride;
+                            int w, int h, int stride) {
 
     const auto& planes = buf->planes();
     size_t total = planes.back().offset + planes.back().length;
@@ -327,6 +369,45 @@ bool Camera::capture_still(const std::string& jpeg_path, StillFormat fmt) {
     bool want_jpeg = (fmt == StillFormat::JPEG || fmt == StillFormat::JPEG_RAW);
     bool want_raw  = (fmt == StillFormat::RAW  || fmt == StillFormat::JPEG_RAW);
 
+    // ---------------------------------------------------------------------------
+    // Dual-stream fast path: queue a still-only request alongside the running
+    // viewfinder — no stop/start, no viewfinder interruption.
+    // Raw Bayer is not available in this path (the still stream is YUV);
+    // fall through to the reconfigure path for raw-only captures.
+    // ---------------------------------------------------------------------------
+    if (dual_stream_ && still_stream_ && want_jpeg) {
+        still_req_ = nullptr;
+        auto req = cam_->createRequest();
+        if (!req) return false;
+
+        auto& stills = still_alloc_->buffers(still_stream_);
+        if (req->addBuffer(still_stream_, stills[0].get()) != 0) return false;
+
+        // Queue the still request alongside ongoing viewfinder requests.
+        still_pending_req_ = std::move(req);
+        cam_->queueRequest(still_pending_req_.get());
+
+        {
+            std::unique_lock<std::mutex> lk(still_mutex_);
+            still_cv_.wait_for(lk, std::chrono::seconds(5),
+                               [this]{ return still_req_ != nullptr; });
+        }
+
+        bool ok = false;
+        if (still_req_ && still_req_->status() == Request::RequestComplete) {
+            ok = still_save_jpeg(jpeg_path,
+                                 still_req_->findBuffer(still_stream_),
+                                 still_w_, still_h_, still_stride_);
+        }
+        still_pending_req_.reset();
+        return ok;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Single-stream fallback: stop viewfinder, reconfigure, capture, restart.
+    // Used when dual-stream is unavailable or for raw-only captures.
+    // ---------------------------------------------------------------------------
+
     // Save viewfinder dimensions before stopping.
     int saved_w = width_, saved_h = height_, saved_fps = fps_;
     stop();
@@ -395,7 +476,9 @@ bool Camera::capture_still(const std::string& jpeg_path, StillFormat fmt) {
         if (want_jpeg) {
             ok = still_save_jpeg(jpeg_path,
                                  still_req_->findBuffer(scfg->at(0).stream()),
-                                 scfg->at(0));
+                                 (int)scfg->at(0).size.width,
+                                 (int)scfg->at(0).size.height,
+                                 (int)scfg->at(0).stride);
         }
         if (want_raw) {
             int ri = want_jpeg ? 1 : 0;

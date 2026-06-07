@@ -103,6 +103,10 @@ public:
 
     CameraMode current_mode() const { return {width_, height_}; }
 
+    // True when the camera was started with simultaneous Viewfinder + StillCapture
+    // streams. capture_still() uses the fast dual-stream path in this case.
+    bool dual_stream() const { return dual_stream_; }
+
 private:
     void request_complete(libcamera::Request* req);
     void enqueue_request(libcamera::Request* req);
@@ -130,7 +134,15 @@ private:
 
     bool running_{false};
 
-    // One-shot sync for still capture (used only inside capture_still).
+    // Dual-stream state — set by start(), cleared by stop().
+    bool                             dual_stream_{false};
+    libcamera::Stream*               vf_stream_{nullptr};
+    libcamera::Stream*               still_stream_{nullptr};
+    int                              still_w_{0}, still_h_{0}, still_stride_{0};
+    libcamera::FrameBufferAllocator* still_alloc_{nullptr};
+    std::unique_ptr<libcamera::Request> still_pending_req_;
+
+    // Sync for still capture (dual-stream fast path and single-stream fallback).
     mutable std::mutex       still_mutex_;
     std::condition_variable  still_cv_;
     libcamera::Request*      still_req_{nullptr};
