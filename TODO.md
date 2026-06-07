@@ -25,6 +25,29 @@
 - [ ] **Still capture quality** — `camera.cpp::capture_still` currently saves the viewfinder
       frame as JPEG. A proper implementation should switch to `StillCapture` role for full
       sensor resolution. Implement dual-stream (viewfinder + stills) or a brief reconfigure.
+
+- [ ] **Still capture during video recording** — pressing Space during recording should save
+      a JPEG without interrupting the video stream. Several approaches exist (see notes below);
+      the recommended path is a dedicated async save thread with a bounded frame queue.
+
+  **Option A — Async save thread (recommended):**
+  Copy the current YUV frame into a `std::vector<uint8_t>` (≈3 MB for 1080p) and push it
+  into a thread-safe bounded queue (cap at 4 frames to bound memory). A worker thread drains
+  the queue: converts each frame to JPEG via ffmpeg, injects EXIF, saves to disk. Video
+  recording is completely unaffected. This is the right tradeoff of simplicity vs quality.
+
+  **Option B — libcamera dual-stream:**
+  Configure both `StreamRole::Viewfinder` and `StreamRole::StillCapture` simultaneously.
+  The still stream runs at full sensor resolution and can be triggered independently.
+  Higher quality but significantly more complex — separate buffer pools, per-request stream
+  masks, synchronised ControlLists. Worth revisiting once the viewfinder path is stable.
+
+  **Option C — MKV timestamp marker (low quality, graceful fallback):**
+  On Space press during recording, write a chapter/cue marker into the MKV container
+  (libavformat `av_dict_set` on the stream, or a side-data packet). At shutdown, walk the
+  marked timestamps and extract the nearest I-frame as a JPEG via `ffmpeg -ss`. Avoids any
+  extra I/O during recording but quality is bounded by video bitrate and compression
+  (not suitable for high-magnification work where fine detail matters).
 - [ ] **Aperture control UX** — aperture steps (+1 f-stop per key press) may be too coarse.
       Consider logarithmic half-stop or third-stop increments and clamp to the lens's
       reported `ApertureFpsRange`.
@@ -67,6 +90,12 @@
 - [ ] **Calibration image** — press a key to overlay a reference grid for focus calibration.
 - [ ] **White balance control** — expose `AwbEnable` and manual `ColourGains`.
 - [ ] **ISO display** — add ISO to the OSD bar once the analogue gain → ISO mapping is confirmed.
+- [ ] **Bluetooth image sync** — allow the user to pull captured stills/videos to a phone or
+      laptop over Bluetooth without plugging in a cable. Options to explore: BlueZ OBEX Object
+      Push (standard; works with Android and most desktops), or a lightweight custom BLE GATT
+      service that advertises new files. Triggered either on demand (key binding) or
+      automatically on Wi-Fi/BT connection. Would require `bluez` and `obexd` (or equivalent)
+      in the pi-gen runtime package list.
 
 ## Build / CI
 
