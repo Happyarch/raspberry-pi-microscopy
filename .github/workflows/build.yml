@@ -2,13 +2,8 @@ name: Build
 
 on:
   workflow_dispatch:
-  push:
-    branches: [master]
-    paths:
-      - 'src/**'
-      - 'CMakeLists.txt'
-      - 'docker/**'
-      - 'assets/**'
+  release:
+    types: [published]
 
 jobs:
   build-binary:
