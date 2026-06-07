@@ -21,6 +21,14 @@ struct InputCallbacks {
     std::function<void()>    on_record_toggle;   // fires after hold threshold
     std::function<void()>    on_toggle_crosshair;
     std::function<void()>    on_quit;
+
+    // Camera mode list navigation — only fired while mode list is open.
+    std::function<void()>    on_cam_mode_up;
+    std::function<void()>    on_cam_mode_down;
+    std::function<void()>    on_cam_mode_confirm;
+    std::function<void()>    on_cam_mode_cancel;
+    // Toggle the mode list open/closed (normal dispatch, list not yet open).
+    std::function<void()>    on_cam_mode_toggle;
 };
 
 class InputHandler {
@@ -39,6 +47,9 @@ public:
 
     // True when the help key has been held for ≥ 3 s (overlay stays while held).
     bool help_visible() const;
+
+    // Switch the input handler between normal dispatch and mode-list navigation.
+    void set_mode_list_open(bool open) { mode_list_open_ = open; }
 
 private:
     struct BoundKey {
@@ -69,6 +80,10 @@ private:
     bool        help_held_{false};
     uint64_t    help_press_tick_{0};
     SDL_Keycode help_sym_{SDLK_h};
+
+    // Camera mode list modal state
+    bool        mode_list_open_{false};
+    SDL_Keycode cam_mode_sym_{SDLK_v};
 
     static constexpr uint64_t kRecordHoldMs = 500;
     static constexpr uint64_t kQuitHoldMs   = 5000;

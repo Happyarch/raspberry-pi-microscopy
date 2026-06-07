@@ -3,6 +3,7 @@
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 #include <string>
+#include <vector>
 #include <unordered_map>
 #include <cstdint>
 
@@ -20,6 +21,14 @@ struct OsdState {
     float    quit_hold_progress;   // 0–1 over 5 s; warning shown above 0.5
     bool     show_crosshair;       // whether to draw the center guide overlay
     bool     show_help;            // true while H has been held ≥ 3 s
+
+    // Camera mode list overlay
+    struct ModeList {
+        bool                       open{false};
+        int                        selected{0};  // highlighted item
+        int                        active{0};    // currently running mode index
+        const std::vector<std::string>* labels{nullptr}; // non-owning
+    } mode_list;
 };
 
 class Osd {
@@ -51,6 +60,7 @@ private:
     void draw_crosshair();
     void draw_quit_warning(float progress);
     void draw_help_overlay();
+    void draw_mode_list(const OsdState::ModeList& ml);
     void ensure_cache_dir() const;
 
     SDL_Renderer* renderer_;

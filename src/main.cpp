@@ -71,6 +71,7 @@ int main() {
     Resolution res = select_best_resolution(0, {cfg.fallback_width, cfg.fallback_height});
 
     Renderer renderer(res.width, res.height);
+    renderer.set_crop(cfg.crop_top, cfg.crop_bottom, cfg.crop_left, cfg.crop_right);
     const int rw = renderer.width();
     const int rh = renderer.height();
 
@@ -92,6 +93,22 @@ int main() {
                     res.width, res.height, cfg.fps,
                     cfg.builtin_bitrate,
                     cfg.ffmpeg_command);
+
+    // ---- Camera mode list (built once after camera starts) ----
+    std::vector<CameraMode>  cam_modes     = camera.get_modes();
+    std::vector<std::string> cam_mode_labels;
+    for (const auto& m : cam_modes) cam_mode_labels.push_back(m.label());
+
+    // Index of the currently running mode.
+    auto find_active_mode = [&]() -> int {
+        CameraMode cur = camera.current_mode();
+        for (int i = 0; i < (int)cam_modes.size(); ++i)
+            if (cam_modes[i] == cur) return i;
+        return 0;
+    };
+    int cam_mode_active   = find_active_mode();
+    int cam_mode_selected = cam_mode_active;
+    bool cam_mode_open    = false;
 
     // ---- Application state ----
     OsdState   osd_state{};
@@ -223,6 +240,33 @@ int main() {
         if (camera.capture_still(path)) ++still_count;
     };
 
+    cbs.on_cam_mode_toggle = [&]{
+        cam_mode_open     = !cam_mode_open;
+        cam_mode_selected = cam_mode_active; // reset selection to current
+    };
+    cbs.on_cam_mode_up = [&]{
+        int n = (int)cam_modes.size();
+        cam_mode_selected = (cam_mode_selected - 1 + n) % n;
+    };
+    cbs.on_cam_mode_down = [&]{
+        int n = (int)cam_modes.size();
+        cam_mode_selected = (cam_mode_selected + 1) % n;
+    };
+    cbs.on_cam_mode_cancel = [&]{
+        cam_mode_open = false;
+    };
+    cbs.on_cam_mode_confirm = [&]{
+        cam_mode_open = false;
+        if (cam_mode_selected == cam_mode_active) return; // no change
+        const CameraMode& m = cam_modes[cam_mode_selected];
+        if (camera.restart_with_mode(m)) {
+            renderer.update_texture_size(camera.width(), camera.height());
+            cam_mode_active   = find_active_mode();
+            cam_mode_selected = cam_mode_active;
+            shutter_step = shutter_index(shutter_us);
+        }
+    };
+
     cbs.on_record_toggle = [&]{
         if (!recording) {
             std::string dir  = ensure_dir(cfg.video_dir);
@@ -241,6 +285,7 @@ int main() {
 
     // ---- Main loop ----
     while (!should_quit) {
+        input.set_mode_list_open(cam_mode_open);
         if (!input.process_events()) break;
 
         CameraFrame frame;
@@ -264,6 +309,8 @@ int main() {
         osd_state.quit_hold_progress   = input.quit_hold_progress();
         osd_state.show_crosshair       = show_crosshair;
         osd_state.show_help            = input.help_visible();
+        osd_state.mode_list            = {cam_mode_open, cam_mode_selected,
+                                          cam_mode_active, &cam_mode_labels};
 
         renderer.present_frame(frame.y, frame.u, frame.v,
                                frame.y_stride, frame.uv_stride,

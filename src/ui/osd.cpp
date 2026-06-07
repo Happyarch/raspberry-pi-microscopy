@@ -184,6 +184,85 @@ void Osd::draw_help_overlay() {
     }
 }
 
+void Osd::draw_mode_list(const OsdState::ModeList& ml) {
+    if (!ml.open || !ml.labels || ml.labels->empty()) return;
+
+    const auto& items = *ml.labels;
+    const int   n     = (int)items.size();
+
+    const SDL_Color kWhite   = {255, 255, 255, 255};
+    const SDL_Color kDim     = {160, 160, 160, 255};
+    const SDL_Color kActive  = {100, 210, 100, 255}; // green tint for running mode
+
+    // Layout constants
+    const int kMaxVisible = 10;
+    const int visible     = std::min(n, kMaxVisible);
+    const int row_h       = font_sz_ + pad_ + 2;
+    const int title_h     = warn_sz_ + pad_ * 2;
+    const int hint_h      = font_sz_ + pad_;
+    const int panel_h     = title_h + visible * row_h + hint_h + pad_;
+    const int panel_w     = dw_ * 6 / 10;
+    const int px          = (dw_ - panel_w) / 2;
+    const int py          = (dh_ - panel_h) / 2;
+
+    // Scroll window: keep selected item visible
+    int scroll = 0;
+    if (ml.selected >= visible)
+        scroll = ml.selected - visible + 1;
+
+    // Background panel
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer_, 10, 10, 10, 220);
+    SDL_Rect panel{px, py, panel_w, panel_h};
+    SDL_RenderFillRect(renderer_, &panel);
+
+    // Title
+    {
+        int tw = 0, th = 0;
+        if (warn_font_) TTF_SizeUTF8(warn_font_, "Camera Resolution", &tw, &th);
+        draw_text("Camera Resolution",
+                  px + (panel_w - tw) / 2, py + pad_, kWhite, warn_font_);
+    }
+
+    // Items
+    int ry = py + title_h;
+    for (int i = 0; i < visible; ++i) {
+        int idx = i + scroll;
+        if (idx >= n) break;
+        const std::string& label = items[idx];
+
+        bool is_sel    = (idx == ml.selected);
+        bool is_active = (idx == ml.active);
+
+        // Cursor and active marker
+        std::string prefix = "  ";
+        if (is_sel && is_active) prefix = "> ";
+        else if (is_sel)         prefix = "> ";
+        else if (is_active)      prefix = "* ";
+
+        SDL_Color col = is_active ? kActive : (is_sel ? kWhite : kDim);
+        if (is_sel) {
+            // Highlight bar behind selected row
+            SDL_SetRenderDrawColor(renderer_, 60, 60, 80, 200);
+            SDL_Rect bar{px + 2, ry - 1, panel_w - 4, row_h};
+            SDL_RenderFillRect(renderer_, &bar);
+        }
+        draw_text(prefix + label, px + pad_, ry, col);
+        ry += row_h;
+    }
+
+    // Scroll indicator dots when list overflows
+    if (n > kMaxVisible) {
+        std::string dots = std::to_string(ml.selected + 1) + "/" + std::to_string(n);
+        draw_text(dots, px + panel_w - pad_ - (int)dots.size() * font_sz_,
+                  py + title_h, kDim);
+    }
+
+    // Hint bar at bottom
+    const std::string hint = "  \xe2\x86\x91\xe2\x86\x93 navigate     Enter confirm     Esc cancel";
+    draw_text(hint, px + pad_, py + panel_h - hint_h, kDim);
+}
+
 void Osd::draw_quit_warning(float progress) {
     if (progress <= 0.5f) return;
 
@@ -420,4 +499,7 @@ void Osd::draw(const OsdState& state) {
 
     // ---- Help overlay (center screen, visible while H held ≥ 3 s) ----
     if (state.show_help) draw_help_overlay();
+
+    // ---- Camera mode list ----
+    draw_mode_list(state.mode_list);
 }

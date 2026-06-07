@@ -4,9 +4,22 @@
 #include <mutex>
 #include <queue>
 #include <string>
+#include <vector>
 #include <functional>
 
 enum class ExposureMode { P = 0, A = 1, S = 2, M = 3 };
+
+struct CameraMode {
+    int         width;
+    int         height;
+
+    std::string label() const {
+        return std::to_string(width) + "x" + std::to_string(height);
+    }
+    bool operator==(const CameraMode& o) const {
+        return width == o.width && height == o.height;
+    }
+};
 
 struct CameraStatus {
     float aperture;        // f-number (e.g. 2.8); 0 if fixed/unknown
@@ -45,6 +58,14 @@ public:
 
     bool capture_still(const std::string& path);
 
+    // Returns all YUV420 resolutions the camera supports, largest first.
+    // Safe to call while the camera is running.
+    std::vector<CameraMode> get_modes() const;
+
+    // Stop and restart the camera with a different resolution.
+    // Returns false if reconfiguration fails (camera remains stopped on failure).
+    bool restart_with_mode(const CameraMode& mode);
+
     void set_ae_enable(bool enable);
     void set_af_enable(bool enable);
     void set_lens_position(float pos);   // 0.0 = infinity, 1.0 = macro
@@ -57,6 +78,8 @@ public:
     int width()  const { return width_; }
     int height() const { return height_; }
     int fps()    const { return fps_; }
+
+    CameraMode current_mode() const { return {width_, height_}; }
 
 private:
     void request_complete(libcamera::Request* req);

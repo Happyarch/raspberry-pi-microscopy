@@ -5,6 +5,7 @@
 #include <libcamera/framebuffer_allocator.h>
 #include <libcamera/property_ids.h>
 #include <sys/mman.h>
+#include <algorithm>
 #include <fstream>
 #include <stdexcept>
 #include <chrono>
@@ -208,6 +209,30 @@ static void queue_control(std::mutex& mtx,
     std::lock_guard<std::mutex> lk(mtx);
     if (!list) list = std::make_unique<libcamera::ControlList>(info_map);
     fn(*list);
+}
+
+std::vector<CameraMode> Camera::get_modes() const {
+    std::vector<CameraMode> modes;
+    auto qcfg = cam_->generateConfiguration({StreamRole::Viewfinder});
+    if (!qcfg) return modes;
+
+    const auto& fmts = qcfg->at(0).formats();
+    for (const auto& fmt : fmts.pixelformats()) {
+        if (fmt != formats::YUV420) continue;
+        for (const auto& sz : fmts.sizes(fmt))
+            modes.push_back({(int)sz.width, (int)sz.height});
+    }
+
+    // Largest resolution first.
+    std::sort(modes.begin(), modes.end(), [](const CameraMode& a, const CameraMode& b) {
+        return (a.width * a.height) > (b.width * b.height);
+    });
+    return modes;
+}
+
+bool Camera::restart_with_mode(const CameraMode& mode) {
+    stop();
+    return start(mode.width, mode.height, fps_);
 }
 
 bool Camera::capture_still(const std::string& path) {

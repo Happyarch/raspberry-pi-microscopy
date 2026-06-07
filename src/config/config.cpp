@@ -115,6 +115,10 @@ Config load_config(const std::string& path) {
             else if (key == "initial_ae_enabled") c.initial_ae_enabled = parse_bool (key, val, c.initial_ae_enabled);
             else if (key == "initial_af_enabled") c.initial_af_enabled = parse_bool (key, val, c.initial_af_enabled);
             else if (key == "initial_aperture")   c.initial_aperture   = parse_float(key, val, c.initial_aperture);
+            else if (key == "crop_top")           c.crop_top    = parse_int(key, val, c.crop_top);
+            else if (key == "crop_bottom")        c.crop_bottom = parse_int(key, val, c.crop_bottom);
+            else if (key == "crop_left")          c.crop_left   = parse_int(key, val, c.crop_left);
+            else if (key == "crop_right")         c.crop_right  = parse_int(key, val, c.crop_right);
         } else if (section == "display") {
             if      (key == "fallback_width")   c.fallback_width  = parse_int (key, val, c.fallback_width);
             else if (key == "fallback_height")  c.fallback_height = parse_int (key, val, c.fallback_height);
@@ -142,6 +146,7 @@ Config load_config(const std::string& path) {
                 {"crosshair",       &KeyMap::crosshair},
                 {"quit",            &KeyMap::quit},
                 {"help",            &KeyMap::help},
+                {"cam_mode",        &KeyMap::cam_mode},
             };
             auto it = key_fields.find(key);
             if (it != key_fields.end())
@@ -201,6 +206,14 @@ initial_af_enabled = true
 # 0.0 = leave at camera default and show f/-- in the OSD.
 initial_aperture = 0.0
 
+# Crop margins (pixels in camera-frame coordinates).
+# Use these to hide the physical mounting frame of the microscope.
+# The cropped region is scaled to fill the display.
+crop_top    = 0
+crop_bottom = 0
+crop_left   = 0
+crop_right  = 0
+
 [display]
 # Fallback resolution if no supported EDID mode is detected via SDL2.
 fallback_width = 1280
@@ -235,6 +248,7 @@ record          = shift+r
 crosshair       = c
 quit            = escape
 help            = h
+cam_mode        = v
 )";
     std::cerr << "[config] wrote default config to " << path << "\n";
 }

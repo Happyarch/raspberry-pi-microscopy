@@ -43,7 +43,13 @@ void InputHandler::build_bindings(const KeyMap& keys) {
 
     auto [hsym, hshift] = parse_key_binding(keys.help);
     help_sym_           = (hsym != SDLK_UNKNOWN) ? hsym : SDLK_h;
-    (void)hshift; // help binding never requires a modifier
+    (void)hshift;
+
+    auto [vsym, vshift] = parse_key_binding(keys.cam_mode);
+    cam_mode_sym_       = (vsym != SDLK_UNKNOWN) ? vsym : SDLK_v;
+    (void)vshift;
+
+    add(keys.cam_mode, true, [&]{ if (cbs_.on_cam_mode_toggle) cbs_.on_cam_mode_toggle(); });
 }
 
 InputHandler::InputHandler(InputCallbacks cbs, const KeyMap& keys)
@@ -65,6 +71,22 @@ bool InputHandler::process_events() {
         if (ev.type == SDL_KEYDOWN) {
             bool shift = (ev.key.keysym.mod & KMOD_SHIFT) != 0;
             SDL_Keycode sym = ev.key.keysym.sym;
+
+            // ---- Camera mode list modal navigation ----
+            // When the list is open, arrow keys and confirm/cancel are consumed
+            // here; all other normal bindings are suppressed.
+            if (mode_list_open_ && !ev.key.repeat) {
+                if (sym == SDLK_UP && !shift) {
+                    if (cbs_.on_cam_mode_up) cbs_.on_cam_mode_up();
+                } else if (sym == SDLK_DOWN && !shift) {
+                    if (cbs_.on_cam_mode_down) cbs_.on_cam_mode_down();
+                } else if (sym == SDLK_SPACE || sym == SDLK_RETURN) {
+                    if (cbs_.on_cam_mode_confirm) cbs_.on_cam_mode_confirm();
+                } else if (sym == SDLK_ESCAPE || sym == cam_mode_sym_) {
+                    if (cbs_.on_cam_mode_cancel) cbs_.on_cam_mode_cancel();
+                }
+                continue;
+            }
 
             // ---- Help hold start ----
             if (sym == help_sym_ && !shift && !ev.key.repeat)

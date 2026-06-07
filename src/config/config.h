@@ -22,6 +22,7 @@ struct KeyMap {
     std::string crosshair       = "c";
     std::string quit            = "escape";  // q always acts as a secondary quit
     std::string help            = "h";       // hold 3 s to show key binding overlay
+    std::string cam_mode        = "v";       // open/close camera mode list
 };
 
 struct Config {
@@ -38,6 +39,10 @@ struct Config {
     bool  initial_ae_enabled;   // autoexposure on at startup
     bool  initial_af_enabled;   // autofocus on at startup
     float initial_aperture;     // f-number to set at startup; 0.0 = use camera default
+    int   crop_top{0};          // pixels to trim from camera frame edges before display
+    int   crop_bottom{0};
+    int   crop_left{0};
+    int   crop_right{0};
 
     // [display]
     int  fallback_width;

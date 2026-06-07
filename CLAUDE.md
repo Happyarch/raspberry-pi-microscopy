@@ -48,6 +48,9 @@ scripts/         Build, image, flash scripts
 - The `video_backend` config key selects `builtin` (V4L2 + libavformat) or `ffmpeg` (subprocess pipe with configurable command).
 - Still capture currently saves the viewfinder frame as JPEG. Full-resolution StillCapture is in TODO.md.
 
+## Pi user account
+The Pi user is `microscopi` (not `pi`). SSH and scp target `microscopi@192.168.1.220`.
+
 ## Permissions
 When a task requires root privileges, do not attempt to run it or find a workaround. Instead, tell the user what needs to be done, provide the exact command, and explain what it does so they can run it themselves.
 

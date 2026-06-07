@@ -1,4 +1,5 @@
 #include "renderer.h"
+#include <algorithm>
 #include <stdexcept>
 
 Renderer::Renderer(int width, int height)
@@ -26,12 +27,15 @@ Renderer::Renderer(int width, int height)
     // and camera resolution match what's really on screen.
     SDL_GetRendererOutputSize(renderer_, &width_, &height_);
 
+    cam_w_ = width_;
+    cam_h_ = height_;
+
     // IYUV = I420 = planar YUV 4:2:0 with U (Cb) before V (Cr), matching
     // libcamera's YUV420 output order.
     frame_tex_ = SDL_CreateTexture(renderer_,
                                    SDL_PIXELFORMAT_IYUV,
                                    SDL_TEXTUREACCESS_STREAMING,
-                                   width_, height_);
+                                   cam_w_, cam_h_);
     if (!frame_tex_)
         throw std::runtime_error(std::string("SDL_CreateTexture: ") + SDL_GetError());
 }
@@ -41,6 +45,22 @@ Renderer::~Renderer() {
     if (renderer_)   SDL_DestroyRenderer(renderer_);
     if (window_)     SDL_DestroyWindow(window_);
     SDL_Quit();
+}
+
+void Renderer::update_texture_size(int cam_width, int cam_height) {
+    cam_w_ = cam_width;
+    cam_h_ = cam_height;
+    if (frame_tex_) SDL_DestroyTexture(frame_tex_);
+    frame_tex_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_IYUV,
+                                   SDL_TEXTUREACCESS_STREAMING,
+                                   cam_w_, cam_h_);
+}
+
+void Renderer::set_crop(int top, int bottom, int left, int right) {
+    crop_top_    = top;
+    crop_bottom_ = bottom;
+    crop_left_   = left;
+    crop_right_  = right;
 }
 
 void Renderer::present_frame(const uint8_t* y, const uint8_t* u, const uint8_t* v,
@@ -53,7 +73,16 @@ void Renderer::present_frame(const uint8_t* y, const uint8_t* u, const uint8_t* 
                          v, uv_stride);
 
     SDL_RenderClear(renderer_);
-    SDL_RenderCopy(renderer_, frame_tex_, nullptr, nullptr);
+    if (crop_top_ || crop_bottom_ || crop_left_ || crop_right_) {
+        SDL_Rect src;
+        src.x = crop_left_;
+        src.y = crop_top_;
+        src.w = std::max(1, cam_w_ - crop_left_ - crop_right_);
+        src.h = std::max(1, cam_h_ - crop_top_  - crop_bottom_);
+        SDL_RenderCopy(renderer_, frame_tex_, &src, nullptr);
+    } else {
+        SDL_RenderCopy(renderer_, frame_tex_, nullptr, nullptr);
+    }
 
     if (osd) osd->draw(state);
 
