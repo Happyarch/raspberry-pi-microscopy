@@ -1,0 +1,19 @@
+[Unit]
+Description=Load kexec crash kernel
+After=local-fs.target
+ConditionPathExists=/sys/kernel/kexec_crash_size
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c '\
+  ROOT_UUID=$(findmnt -n -o UUID /) && \
+  cat /boot/intel-ucode.img /boot/initramfs-linux.img > /tmp/kdump-initrd.img && \
+  kexec -p /boot/vmlinuz-linux \
+    --initrd=/tmp/kdump-initrd.img \
+    --append="root=UUID=$${ROOT_UUID} rw rootfstype=ext4 \
+              irqpoll maxcpus=1 reset_devices \
+              systemd.unit=kdump-save.service"'
+
+[Install]
+WantedBy=multi-user.target

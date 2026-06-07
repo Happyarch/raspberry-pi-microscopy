@@ -19,10 +19,14 @@ echo "microscopi:password" | chpasswd
 EOF
 
 # Ensure SSH password authentication is permitted (Pi OS disables it by default).
+# Patch the main config and add a drop-in so sshd_config.d/ overrides can't undo it.
 sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' \
     "${ROOTFS_DIR}/etc/ssh/sshd_config"
 sed -i 's/^#\?PermitEmptyPasswords.*/PermitEmptyPasswords no/' \
     "${ROOTFS_DIR}/etc/ssh/sshd_config"
+mkdir -p "${ROOTFS_DIR}/etc/ssh/sshd_config.d"
+printf 'PasswordAuthentication yes\nPermitEmptyPasswords no\nPermitRootLogin yes\n' \
+    > "${ROOTFS_DIR}/etc/ssh/sshd_config.d/00-debug-password-auth.conf"
 
 # Install a gdbserver launch helper so you can start it from the Pi console
 # without typing the full command every time.

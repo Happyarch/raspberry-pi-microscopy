@@ -12,6 +12,7 @@ Environment=HOME=/home/microscopi
 ExecStart=/usr/local/bin/microscopi
 Restart=always
 RestartSec=3
+TimeoutStopSec=5
 StandardOutput=journal
 StandardError=journal
 

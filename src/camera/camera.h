@@ -6,6 +6,8 @@
 #include <string>
 #include <functional>
 
+enum class ExposureMode { P = 0, A = 1, S = 2, M = 3 };
+
 struct CameraStatus {
     float aperture;        // f-number (e.g. 2.8); 0 if fixed/unknown
     float exposure_time;   // microseconds
@@ -45,10 +47,10 @@ public:
 
     void set_ae_enable(bool enable);
     void set_af_enable(bool enable);
-    // lens_position: 0.0 = infinity, 1.0 = macro
-    void set_lens_position(float pos);
-    // aperture f-number; no-op on fixed-aperture lenses
-    void set_aperture(float fstop);
+    void set_lens_position(float pos);   // 0.0 = infinity, 1.0 = macro
+    void set_aperture(float fstop);      // cosmetic on fixed-aperture lenses
+    void set_shutter_speed(float us);    // sets ExposureTime; caller must disable AE first
+    void set_iso(int iso);               // sets AnalogueGain = iso/100; caller manages AE
 
     CameraStatus get_status() const;
 

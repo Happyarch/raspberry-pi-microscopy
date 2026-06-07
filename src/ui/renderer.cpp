@@ -21,11 +21,17 @@ Renderer::Renderer(int width, int height)
     if (!renderer_)
         throw std::runtime_error(std::string("SDL_CreateRenderer: ") + SDL_GetError());
 
-    // YV12 = planar YUV 4:2:0, SDL_UpdateYUVTexture accepts Y+U+V planes.
+    // SDL_WINDOW_FULLSCREEN_DESKTOP ignores the requested dimensions and uses
+    // the display's current mode.  Query the actual output size so the OSD
+    // and camera resolution match what's really on screen.
+    SDL_GetRendererOutputSize(renderer_, &width_, &height_);
+
+    // IYUV = I420 = planar YUV 4:2:0 with U (Cb) before V (Cr), matching
+    // libcamera's YUV420 output order.
     frame_tex_ = SDL_CreateTexture(renderer_,
-                                   SDL_PIXELFORMAT_YV12,
+                                   SDL_PIXELFORMAT_IYUV,
                                    SDL_TEXTUREACCESS_STREAMING,
-                                   width, height);
+                                   width_, height_);
     if (!frame_tex_)
         throw std::runtime_error(std::string("SDL_CreateTexture: ") + SDL_GetError());
 }

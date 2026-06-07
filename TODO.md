@@ -61,5 +61,10 @@
 
 - [ ] Set up GitHub Actions workflow to build the Docker image and validate compilation
       (cannot run on x86_64 without QEMU, but at minimum check the CMake configure step).
+- [ ] **GitHub Actions full image build** — on push to `main`, run `build-app-debug.sh` then
+      `build-image-debug.sh` via `docker/setup-qemu-action` (ARM64 binfmt on Ubuntu runner).
+      Upload the `.img.gz` to a GitHub Release rather than an artifact (releases allow 2 GB;
+      artifacts cap at 500 MB). Trigger manually via `workflow_dispatch` to avoid burning the
+      2,000 min/month free-tier on every push. Build takes ~40 min per run.
 - [ ] Add a `scripts/dev-build.sh` that builds and runs a mock version on the host using
       a USB webcam (V4L2) + X11 backend for iterative UI development without a Pi.

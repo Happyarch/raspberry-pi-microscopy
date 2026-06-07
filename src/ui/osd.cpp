@@ -2,7 +2,6 @@
 #include <SDL2/SDL_image.h>
 #include <sys/stat.h>
 #include <cmath>
-#include <cstring>
 #include <cstdio>
 #include <sstream>
 #include <iomanip>
@@ -18,17 +17,20 @@ Osd::Osd(SDL_Renderer* renderer,
          int display_w, int display_h,
          const std::string& icons_dir,
          const std::string& font_path,
-         const std::string& cache_dir)
+         const std::string& cache_dir,
+         const KeyMap& keys)
     : renderer_(renderer)
     , dw_(display_w), dh_(display_h)
     , icons_dir_(icons_dir)
     , font_path_(font_path)
+    , keys_(keys)
 {
     // All sizes are proportional to display height so the OSD looks the same
     // relative to the image regardless of resolution.
     bar_h_   = std::max(28, dh_ / 14);
     icon_sz_ = std::max(14, (int)(bar_h_ * 0.52f));
     font_sz_ = std::max( 9, (int)(bar_h_ * 0.38f));
+    warn_sz_ = std::max(18, dh_ / 20);
     pad_     = std::max( 6, (int)(bar_h_ * 0.16f));
 
     // Cache directory is per display height so different resolutions get their
@@ -37,7 +39,8 @@ Osd::Osd(SDL_Renderer* renderer,
     ensure_cache_dir();
 
     TTF_Init();
-    font_ = TTF_OpenFont(font_path_.c_str(), font_sz_);
+    font_      = TTF_OpenFont(font_path_.c_str(), font_sz_);
+    warn_font_ = TTF_OpenFont(font_path_.c_str(), warn_sz_);
 
     // Pre-load all icons used in the OSD.
     for (const auto& name : {"aperture", "camera", "crosshair", "circle-dot", "sun"})
@@ -45,7 +48,8 @@ Osd::Osd(SDL_Renderer* renderer,
 }
 
 Osd::~Osd() {
-    if (font_) TTF_CloseFont(font_);
+    if (warn_font_) TTF_CloseFont(warn_font_);
+    if (font_)      TTF_CloseFont(font_);
     for (auto& [k, v] : icons_) if (v) SDL_DestroyTexture(v);
     TTF_Quit();
 }
@@ -86,15 +90,113 @@ SDL_Texture* Osd::load_icon(const std::string& name) {
 // ---------------------------------------------------------------------------
 
 void Osd::draw_text(const std::string& text, int x, int y,
-                    SDL_Color color, bool /*bold*/) {
-    if (!font_ || text.empty()) return;
-    SDL_Surface* sur = TTF_RenderUTF8_Blended(font_, text.c_str(), color);
+                    SDL_Color color, TTF_Font* font) {
+    TTF_Font* f = font ? font : font_;
+    if (!f || text.empty()) return;
+    SDL_Surface* sur = TTF_RenderUTF8_Blended(f, text.c_str(), color);
     if (!sur) return;
     SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer_, sur);
     SDL_Rect dst{x, y, sur->w, sur->h};
     SDL_RenderCopy(renderer_, tex, nullptr, &dst);
     SDL_DestroyTexture(tex);
     SDL_FreeSurface(sur);
+}
+
+void Osd::draw_text_outlined(const std::string& text, int x, int y,
+                              SDL_Color fg, SDL_Color outline, TTF_Font* font) {
+    TTF_Font* f = font ? font : font_;
+    if (!f || text.empty()) return;
+    // Render outline by drawing in the outline color at 8 cardinal offsets.
+    for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            if (dx == 0 && dy == 0) continue;
+            SDL_Surface* s = TTF_RenderUTF8_Blended(f, text.c_str(), outline);
+            if (!s) continue;
+            SDL_Texture* t = SDL_CreateTextureFromSurface(renderer_, s);
+            SDL_Rect dst{x + dx, y + dy, s->w, s->h};
+            SDL_RenderCopy(renderer_, t, nullptr, &dst);
+            SDL_DestroyTexture(t);
+            SDL_FreeSurface(s);
+        }
+    }
+    // Foreground on top.
+    draw_text(text, x, y, fg, f);
+}
+
+void Osd::draw_help_overlay() {
+    struct Row { const char* label; const std::string& key; };
+    const std::string mode_direct =
+        keys_.mode_p + "  " + keys_.mode_a + "  " +
+        keys_.mode_s + "  " + keys_.mode_m + "  (direct)";
+    const std::string mode_cycle =
+        keys_.mode_cycle_fwd + " / " + keys_.mode_cycle_back + "  (cycle)";
+    const std::string shutter_str  = keys_.shutter_up  + " / " + keys_.shutter_down;
+    const std::string focus_str    = keys_.focus_up    + " / " + keys_.focus_down;
+    const std::string aperture_str = keys_.aperture_up + " / " + keys_.aperture_down;
+    const std::string iso_str      = keys_.iso_up      + " / " + keys_.iso_down;
+    const std::string record_str   = keys_.record      + "  (hold)";
+    const std::string quit_str     = keys_.quit        + " or q  (hold 5 s)";
+    const std::string help_str     = keys_.help        + "  (hold 3 s)";
+
+    const Row rows[] = {
+        {"Mode",        mode_direct},
+        {"",            mode_cycle},
+        {"Shutter ±",   shutter_str},
+        {"Focus ±",     focus_str},
+        {"Aperture ±",  aperture_str},
+        {"ISO ±",       iso_str},
+        {"Autofocus",   keys_.toggle_af},
+        {"Still",       keys_.still},
+        {"Record",      record_str},
+        {"Crosshair",   keys_.crosshair},
+        {"Help",        help_str},
+        {"Quit",        quit_str},
+    };
+    const int n_rows = (int)(sizeof(rows) / sizeof(rows[0]));
+
+    const int row_h   = font_sz_ + pad_;
+    const int title_h = warn_sz_ + pad_ * 2;
+    const int panel_h = title_h + n_rows * row_h + pad_ * 2;
+    const int col_gap = font_sz_ * 6;
+    const int panel_w = dw_ / 2;
+    const int px      = (dw_ - panel_w) / 2;
+    const int py      = (dh_ - panel_h) / 2;
+
+    // Background panel
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 210);
+    SDL_Rect panel{px, py, panel_w, panel_h};
+    SDL_RenderFillRect(renderer_, &panel);
+
+    // Title
+    const SDL_Color kWhite = {255, 255, 255, 255};
+    const SDL_Color kDim   = {170, 170, 170, 255};
+    int tw = 0, th = 0;
+    if (warn_font_) TTF_SizeUTF8(warn_font_, "Key Bindings", &tw, &th);
+    draw_text("Key Bindings", px + (panel_w - tw) / 2, py + pad_, kWhite, warn_font_);
+
+    // Rows: label on left, binding on right
+    int ry = py + title_h;
+    for (int i = 0; i < n_rows; ++i, ry += row_h) {
+        if (rows[i].label[0] != '\0')
+            draw_text(rows[i].label, px + pad_, ry, kDim);
+        draw_text(rows[i].key, px + pad_ + col_gap, ry, kWhite);
+    }
+}
+
+void Osd::draw_quit_warning(float progress) {
+    if (progress <= 0.5f) return;
+
+    const std::string msg = "Keep holding to quit";
+    int tw = 0, th = 0;
+    if (warn_font_) TTF_SizeUTF8(warn_font_, msg.c_str(), &tw, &th);
+
+    int x = (dw_ - tw) / 2;
+    int y = (dh_ - th) / 2;
+
+    SDL_Color fg      = {220, 60, 60, 255};
+    SDL_Color outline = {0, 0, 0, 220};
+    draw_text_outlined(msg, x, y, fg, outline, warn_font_);
 }
 
 void Osd::draw_icon(SDL_Texture* tex, int x, int y, uint8_t alpha) {
@@ -156,6 +258,16 @@ void Osd::draw_crosshair() {
 // Main draw — called every frame
 // ---------------------------------------------------------------------------
 
+static const char* mode_label(int m) {
+    switch (m) {
+    case 0: return "P";
+    case 1: return "A";
+    case 2: return "S";
+    case 3: return "M";
+    default: return "?";
+    }
+}
+
 void Osd::draw(const OsdState& state) {
     const SDL_Color kWhite = {255, 255, 255, 255};
     const SDL_Color kDim   = {150, 150, 150, 200};
@@ -196,7 +308,18 @@ void Osd::draw(const OsdState& state) {
     draw_text(ap_str, cx, text_y, kWhite);
     cx += text_w(ap_str) + pad_ * 2;
 
-    // ---- Exposure ----
+    // ---- Mode ----
+    {
+        std::string mode_str = mode_label(state.exposure_mode);
+        // In P and A modes the camera drives exposure; dim the sun icon.
+        bool ae_auto = (state.exposure_mode == 0 || state.exposure_mode == 1);
+        draw_icon(icons_["sun"], cx, icon_y, ae_auto ? 255 : 100);
+        cx += icon_sz_ + 4;
+        draw_text(mode_str, cx, text_y, kWhite);
+        cx += text_w(mode_str) + pad_;
+    }
+
+    // ---- Shutter speed ----
     {
         std::string exp_str;
         if (state.exposure_us > 0.0f) {
@@ -212,10 +335,18 @@ void Osd::draw(const OsdState& state) {
         } else {
             exp_str = "---";
         }
-        draw_icon(icons_["sun"], cx, icon_y, state.ae_enabled ? 255 : 100);
-        cx += icon_sz_ + 4;
-        draw_text(exp_str, cx, text_y, state.ae_enabled ? kWhite : kDim);
+        bool shutter_manual = (state.exposure_mode == 2 || state.exposure_mode == 3);
+        draw_text(exp_str, cx, text_y, shutter_manual ? kWhite : kDim);
         cx += text_w(exp_str) + pad_ * 2;
+    }
+
+    // ---- ISO ----
+    {
+        std::string iso_str = "ISO ";
+        iso_str += (state.iso == 0) ? "AUTO" : std::to_string(state.iso);
+        bool iso_manual = (state.iso != 0);
+        draw_text(iso_str, cx, text_y, iso_manual ? kWhite : kDim);
+        cx += text_w(iso_str) + pad_ * 2;
     }
 
     // ---- Focus ----
@@ -276,11 +407,17 @@ void Osd::draw(const OsdState& state) {
                   dot_cx + dot_r + pad_, dot_cy - font_sz_ / 2, kRed);
     }
 
-    // ---- Shift+R hold progress arc ----
+    // ---- Record hold progress arc ----
     if (state.record_hold_progress > 0.0f) {
         int dot_r  = bar_h_ / 4;
         int dot_cx = pad_ + dot_r;
         int dot_cy = pad_ + dot_r;
         draw_record_arc(dot_cx, dot_cy, dot_r + 4, state.record_hold_progress);
     }
+
+    // ---- Quit hold warning (center screen, appears at 2.5 s) ----
+    draw_quit_warning(state.quit_hold_progress);
+
+    // ---- Help overlay (center screen, visible while H held ≥ 3 s) ----
+    if (state.show_help) draw_help_overlay();
 }

@@ -3,6 +3,7 @@
 #include <iostream>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 
 namespace fs = std::filesystem;
 
@@ -118,6 +119,33 @@ Config load_config(const std::string& path) {
             if      (key == "fallback_width")   c.fallback_width  = parse_int (key, val, c.fallback_width);
             else if (key == "fallback_height")  c.fallback_height = parse_int (key, val, c.fallback_height);
             else if (key == "show_crosshair")   c.show_crosshair  = parse_bool(key, val, c.show_crosshair);
+        } else if (section == "keys") {
+            using KF = std::string KeyMap::*;
+            static const std::unordered_map<std::string, KF> key_fields = {
+                {"mode_cycle_fwd",  &KeyMap::mode_cycle_fwd},
+                {"mode_cycle_back", &KeyMap::mode_cycle_back},
+                {"mode_p",          &KeyMap::mode_p},
+                {"mode_a",          &KeyMap::mode_a},
+                {"mode_s",          &KeyMap::mode_s},
+                {"mode_m",          &KeyMap::mode_m},
+                {"iso_up",          &KeyMap::iso_up},
+                {"iso_down",        &KeyMap::iso_down},
+                {"shutter_up",      &KeyMap::shutter_up},
+                {"shutter_down",    &KeyMap::shutter_down},
+                {"focus_up",        &KeyMap::focus_up},
+                {"focus_down",      &KeyMap::focus_down},
+                {"aperture_up",     &KeyMap::aperture_up},
+                {"aperture_down",   &KeyMap::aperture_down},
+                {"toggle_af",       &KeyMap::toggle_af},
+                {"still",           &KeyMap::still},
+                {"record",          &KeyMap::record},
+                {"crosshair",       &KeyMap::crosshair},
+                {"quit",            &KeyMap::quit},
+                {"help",            &KeyMap::help},
+            };
+            auto it = key_fields.find(key);
+            if (it != key_fields.end())
+                c.keys.*(it->second) = val;
         }
     }
     return c;
@@ -181,6 +209,32 @@ fallback_height = 720
 # Whether the center guide overlay (circle + crosshair) is shown at startup.
 # Toggle at runtime with the 'c' key.
 show_crosshair = false
+
+[keys]
+# Key bindings. Use lowercase key names: letters (a-z), digits (0-9),
+# or names: up, down, left, right, space, escape, return, tab.
+# Prefix with "shift+" for shift-modified keys (e.g. "shift+t").
+# "q" always acts as a secondary quit regardless of the quit binding.
+mode_cycle_fwd  = t
+mode_cycle_back = shift+t
+mode_p          = p
+mode_a          = a
+mode_s          = s
+mode_m          = m
+iso_up          = i
+iso_down        = shift+i
+shutter_up      = shift+up
+shutter_down    = shift+down
+focus_up        = up
+focus_down      = down
+aperture_up     = right
+aperture_down   = left
+toggle_af       = shift+a
+still           = space
+record          = shift+r
+crosshair       = c
+quit            = escape
+help            = h
 )";
     std::cerr << "[config] wrote default config to " << path << "\n";
 }

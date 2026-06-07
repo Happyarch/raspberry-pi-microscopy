@@ -1,6 +1,29 @@
 #pragma once
 #include <string>
 
+struct KeyMap {
+    std::string mode_cycle_fwd  = "t";
+    std::string mode_cycle_back = "shift+t";
+    std::string mode_p          = "p";
+    std::string mode_a          = "a";
+    std::string mode_s          = "s";
+    std::string mode_m          = "m";
+    std::string iso_up          = "i";
+    std::string iso_down        = "shift+i";
+    std::string shutter_up      = "shift+up";
+    std::string shutter_down    = "shift+down";
+    std::string focus_up        = "up";
+    std::string focus_down      = "down";
+    std::string aperture_up     = "right";
+    std::string aperture_down   = "left";
+    std::string toggle_af       = "shift+a";
+    std::string still           = "space";
+    std::string record          = "shift+r";
+    std::string crosshair       = "c";
+    std::string quit            = "escape";  // q always acts as a secondary quit
+    std::string help            = "h";       // hold 3 s to show key binding overlay
+};
+
 struct Config {
     // [video]
     std::string video_backend;      // "builtin" or "ffmpeg"
@@ -20,6 +43,9 @@ struct Config {
     int  fallback_width;
     int  fallback_height;
     bool show_crosshair;        // guide overlay visible at startup
+
+    // [keys]
+    KeyMap keys;
 };
 
 // Load config from path. Missing keys fall back to built-in defaults.

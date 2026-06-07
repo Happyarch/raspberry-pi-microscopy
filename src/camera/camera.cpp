@@ -10,8 +10,6 @@
 #include <chrono>
 #include <thread>
 #include <cstring>
-#include <cmath>
-
 // Import libcamera names selectively — do NOT import libcamera::Camera since
 // it clashes with our own Camera class defined in camera.h.
 using libcamera::CameraManager;
@@ -20,7 +18,6 @@ using libcamera::FrameBufferAllocator;
 using libcamera::Request;
 using libcamera::ControlList;
 using libcamera::StreamRole;
-using libcamera::FrameBuffer;
 using libcamera::Span;
 namespace controls = libcamera::controls;
 namespace formats  = libcamera::formats;
@@ -152,31 +149,39 @@ bool Camera::get_frame(CameraFrame& out) {
     auto* buf    = req->findBuffer(stream);
     const auto& planes = buf->planes();
 
-    // mmap the buffer planes.
-    struct PlaneMap {
-        void* ptr;
-        size_t len;
-    };
-    // Store mapped ptrs; release lambda will unmap + re-queue.
-    std::vector<PlaneMap> maps;
-    for (auto& pl : planes) {
-        void* p = ::mmap(nullptr, pl.length, PROT_READ, MAP_SHARED, pl.fd.get(), pl.offset);
-        maps.push_back({p, pl.length});
-    }
-
     auto& scfg = cfg_->at(0);
     int stride = scfg.stride;
 
-    out.width     = width_;
-    out.height    = height_;
+    // Map the whole DMA-BUF at offset 0.  Per-plane offsets on the Pi are not
+    // page-aligned (e.g. Y ends at 1920*1080 = 2 073 600 bytes which is not a
+    // multiple of 4096), so mmapping each plane at its own offset fails with
+    // MAP_FAILED.  One mmap of the full buffer avoids that.
+    size_t total = planes.back().offset + planes.back().length;
+    void* p = ::mmap(nullptr, total, PROT_READ, MAP_SHARED,
+                     planes[0].fd.get(), 0);
+    if (p == MAP_FAILED) return false;
+
+    const auto* base = static_cast<const uint8_t*>(p);
+    out.width    = width_;
+    out.height   = height_;
     out.y_stride  = stride;
     out.uv_stride = stride / 2;
-    out.y = static_cast<const uint8_t*>(maps[0].ptr);
-    out.u = static_cast<const uint8_t*>(maps[1].ptr);
-    out.v = static_cast<const uint8_t*>(maps[2].ptr);
 
-    out.release = [this, req, maps]() mutable {
-        for (auto& m : maps) ::munmap(m.ptr, m.len);
+    if (planes.size() == 1) {
+        // Single-plane: Y then U then V packed contiguously.
+        size_t y_size = (size_t)stride * height_;
+        out.y = base;
+        out.u = base + y_size;
+        out.v = base + y_size + (size_t)(stride / 2) * (height_ / 2);
+    } else {
+        // Multi-plane sharing one fd: use the stored plane offsets.
+        out.y = base + planes[0].offset;
+        out.u = base + planes[1].offset;
+        out.v = base + planes[2].offset;
+    }
+
+    out.release = [this, req, p, total]() {
+        ::munmap(p, total);
         req->reuse(Request::ReuseBuffers);
         enqueue_request(req);
     };
@@ -265,10 +270,20 @@ void Camera::set_lens_position(float pos) {
 }
 
 void Camera::set_aperture(float fstop) {
-    // Pi cameras have fixed aperture; ApertureValue control does not exist in
-    // libcamera 0.0.3 (Debian Bookworm). Track the value only for OSD display.
     std::lock_guard<std::mutex> lk(status_mutex_);
     status_.aperture = fstop;
+}
+
+void Camera::set_shutter_speed(float us) {
+    int32_t val = (int32_t)us;
+    queue_control(pending_mutex_, pending_controls_, cam_->controls(),
+                  [val](ControlList& c){ c.set(controls::ExposureTime, val); });
+}
+
+void Camera::set_iso(int iso) {
+    float gain = iso / 100.0f;
+    queue_control(pending_mutex_, pending_controls_, cam_->controls(),
+                  [gain](ControlList& c){ c.set(controls::AnalogueGain, gain); });
 }
 
 CameraStatus Camera::get_status() const {

@@ -1,0 +1,22 @@
+[Unit]
+Description=Save kernel crash dump (filtered, kernel pages only)
+DefaultDependencies=no
+After=local-fs.target
+Before=network.target shutdown.target
+ConditionPathExists=/proc/vmcore
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/bash -c '\
+  AVAIL_KB=$(df --output=avail /var/crash | tail -1); \
+  NEED_KB=$((6 * 1024 * 1024)); \
+  if [ "$AVAIL_KB" -lt "$NEED_KB" ]; then \
+    echo "kdump-save: only ${AVAIL_KB} KB free, need 6 GB -- aborting"; \
+    exit 1; \
+  fi'
+ExecStart=/usr/bin/makedumpfile -d 31 -l /proc/vmcore /var/crash/vmcore
+ExecStartPost=/bin/systemctl reboot
+TimeoutSec=600
+
+[Install]
+WantedBy=multi-user.target
