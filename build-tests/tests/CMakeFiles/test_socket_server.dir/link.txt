@@ -1,1 +1,0 @@
-/usr/bin/c++ -g -Wl,--dependency-file=CMakeFiles/test_socket_server.dir/link.d CMakeFiles/test_socket_server.dir/test_socket_server.cpp.o CMakeFiles/test_socket_server.dir/__/src/util/socket_server.cpp.o -o test_socket_server  ../lib/libgtest_main.a ../lib/libgtest.a

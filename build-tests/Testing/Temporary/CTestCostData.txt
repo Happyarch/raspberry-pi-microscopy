@@ -1,6 +1,0 @@
-config 5 0.00176607
-keybinding 5 0.00168985
-exposure 4 0.00165136
-socket_server 3 0.00635013
-mjpeg_server 2 0.400268
----

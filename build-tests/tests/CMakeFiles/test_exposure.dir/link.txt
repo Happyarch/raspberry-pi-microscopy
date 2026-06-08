@@ -1,1 +1,0 @@
-/usr/bin/c++ -g -Wl,--dependency-file=CMakeFiles/test_exposure.dir/link.d CMakeFiles/test_exposure.dir/test_exposure.cpp.o -o test_exposure  ../lib/libgtest_main.a ../lib/libgtest.a

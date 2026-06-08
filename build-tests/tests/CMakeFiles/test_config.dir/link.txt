@@ -1,1 +1,0 @@
-/usr/bin/c++ -g -Wl,--dependency-file=CMakeFiles/test_config.dir/link.d CMakeFiles/test_config.dir/test_config.cpp.o CMakeFiles/test_config.dir/__/src/config/config.cpp.o -o test_config  ../lib/libgtest_main.a ../lib/libgtest.a
