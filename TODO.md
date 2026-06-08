@@ -53,9 +53,11 @@
     GOP structure — artefacts at high magnification, frame may be up to one GOP interval from
     the actual moment. Suitable as a supplementary annotation log alongside Option A.
 
-- [ ] **Aperture control UX** — aperture steps (+1 f-stop per key press) may be too coarse.
-  Consider logarithmic half-stop or third-stop increments and clamp to the lens's
-  reported `ApertureFpsRange`.
+- ✅ **Aperture control UX** — `kApertureMaster` expanded to 31 standard 1/3-stop values
+  (f/1.0 … f/32.0, ISO/CIPA convention). `aperture_index()` now uses log2 distance so
+  one 1/3-stop step is equally sensitive across the full f-number range. Clamped to
+  `aperture_range()` min/max when the lens reports a range (Pi cameras return fixed
+  aperture; ladder is empty and keys are no-ops until a future camera exposes control).
 
 - ✅ **Focus step size** — implemented: `focus_key_step` config key (default 0.05) sets the
   lens-position delta per keyboard Up/Down press. Scroll-wheel step remains separately

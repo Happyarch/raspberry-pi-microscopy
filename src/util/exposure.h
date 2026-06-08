@@ -36,9 +36,21 @@ inline constexpr std::array<int, 8> kIsoMaster = {{
     100, 200, 400, 800, 1600, 3200, 6400, 12800
 }};
 
-// Standard f-stop aperture values, ascending (wider → narrower aperture).
-inline constexpr std::array<float, 11> kApertureMaster = {{
-    1.0f, 1.4f, 2.0f, 2.8f, 4.0f, 5.6f, 8.0f, 11.0f, 16.0f, 22.0f, 32.0f
+// Standard f-stop aperture values at 1/3-stop increments, ascending (wider → narrower).
+// Values follow the ISO/CIPA convention used by Canon/Nikon: each step multiplies
+// the f-number by 2^(1/6) ≈ 1.1225; full stops land on exactly 1,2,4,8,16,32.
+inline constexpr std::array<float, 31> kApertureMaster = {{
+    1.0f, 1.1f, 1.2f,
+    1.4f, 1.6f, 1.8f,
+    2.0f, 2.2f, 2.5f,
+    2.8f, 3.2f, 3.5f,
+    4.0f, 4.5f, 5.0f,
+    5.6f, 6.3f, 7.1f,
+    8.0f, 9.0f, 10.0f,
+   11.0f,13.0f,14.0f,
+   16.0f,18.0f,20.0f,
+   22.0f,25.0f,29.0f,
+   32.0f,
 }};
 
 // ---------------------------------------------------------------------------
@@ -113,12 +125,14 @@ inline int iso_index(int current, const std::vector<int>& ladder) {
 }
 
 // Index in an aperture ladder (ascending f-stops) closest to current f-stop.
+// Uses log2 distance so one third-stop is the same "distance" at f/1.4 and f/22.
 inline int aperture_index(float current_fstop, const std::vector<float>& ladder) {
     if (ladder.empty()) return 0;
+    float log_cur = std::log2(current_fstop);
     int best = 0;
-    float best_d = std::abs(ladder[0] - current_fstop);
+    float best_d = std::abs(std::log2(ladder[0]) - log_cur);
     for (int i = 1; i < (int)ladder.size(); ++i) {
-        float d = std::abs(ladder[i] - current_fstop);
+        float d = std::abs(std::log2(ladder[i]) - log_cur);
         if (d < best_d) { best_d = d; best = i; }
     }
     return best;
