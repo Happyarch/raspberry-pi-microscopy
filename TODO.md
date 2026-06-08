@@ -11,9 +11,9 @@
   the configured format is actually YUV420 before starting the loop, and log a clear
   error if not.
 
-- [ ] **`microscopi` user group membership** — add `microscopi` to the `video` and `render`
-  groups in `stage3/01-run.sh` so the camera and DRM device nodes are accessible without
-  root. Without this the app will fail to open `/dev/video*` and the DRM display.
+- ✅ **`microscopi` user group membership** — implemented: `stage3-microscopi/01-microscopi/00-run.sh`
+  runs `usermod -aG video,render,audio,input microscopi` in the chroot so the camera
+  (`/dev/video*`) and DRM display (`/dev/dri/*`) are accessible without root.
 
 - [ ] **SDL2 kmsdrm on Pi OS Bookworm** — confirm that SDL2 ships with the kmsdrm backend
   enabled in the Bookworm package. If not, build SDL2 from source with
