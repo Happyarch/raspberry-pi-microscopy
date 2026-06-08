@@ -61,3 +61,20 @@ add_executable(test_socket_server
 target_include_directories(test_socket_server PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_socket_server PRIVATE GTest::gtest_main)
 add_test(NAME socket_server COMMAND test_socket_server)
+
+# ---------------------------------------------------------------------------
+# test_mjpeg_server — exercises the HTTP-MJPEG server (requires libjpeg-turbo)
+# ---------------------------------------------------------------------------
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBJPEG REQUIRED libturbojpeg)
+
+add_executable(test_mjpeg_server
+    test_mjpeg_server.cpp
+    ${CMAKE_SOURCE_DIR}/src/util/mjpeg_server.cpp
+)
+target_include_directories(test_mjpeg_server PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${LIBJPEG_INCLUDE_DIRS}
+)
+target_link_libraries(test_mjpeg_server PRIVATE GTest::gtest_main ${LIBJPEG_LIBRARIES})
+add_test(NAME mjpeg_server COMMAND test_mjpeg_server)

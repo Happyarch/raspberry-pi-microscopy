@@ -29,7 +29,7 @@ pkg_check_modules(SDL2_IMAGE  REQUIRED SDL2_image)
 pkg_check_modules(AVFORMAT    REQUIRED libavformat)
 pkg_check_modules(AVCODEC     REQUIRED libavcodec)
 pkg_check_modules(AVUTIL      REQUIRED libavutil)
-pkg_check_modules(LIBJPEG     REQUIRED libjpeg)
+pkg_check_modules(LIBJPEG     REQUIRED libturbojpeg)
 
 # ---------------------------------------------------------------------------
 # Sources
