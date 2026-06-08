@@ -3,9 +3,9 @@
 #include <string>
 
 struct KeyMap {
-    std::string mode_cycle_fwd  = "t";
-    std::string mode_cycle_back = "shift+t";
-    std::string timelapse       = "l";   // hold ≥ 500 ms to start/stop
+    std::string mode_cycle_fwd  = "c";
+    std::string mode_cycle_back = "shift+c";
+    std::string timelapse       = "t";   // hold ≥ 500 ms to start/stop
     std::string mode_p          = "p";
     std::string mode_a          = "a";
     std::string mode_s          = "s";
@@ -21,7 +21,7 @@ struct KeyMap {
     std::string toggle_af       = "shift+a";
     std::string still           = "space";
     std::string record          = "shift+r";
-    std::string crosshair       = "c";
+    std::string crosshair       = "x";
     std::string quit            = "escape";  // q always acts as a secondary quit
     std::string help            = "h";       // hold 3 s to show key binding overlay
     std::string cam_mode        = "v";       // open/close camera mode list

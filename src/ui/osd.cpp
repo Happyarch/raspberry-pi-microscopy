@@ -142,8 +142,8 @@ void Osd::draw_help_overlay() {
     const std::string aperture_str = keys_.aperture_up + " / " + keys_.aperture_down;
     const std::string iso_str      = keys_.iso_up      + " / " + keys_.iso_down;
     const std::string record_str   = keys_.record      + "  (hold)";
+    const std::string tl_str       = keys_.timelapse   + "  (hold)";
     const std::string quit_str     = keys_.quit        + " or q  (hold 5 s)";
-    const std::string help_str     = keys_.help        + "  (hold 3 s)";
 
     const Row rows[] = {
         {"Mode",        mode_direct},
@@ -155,8 +155,9 @@ void Osd::draw_help_overlay() {
         {"Autofocus",   keys_.toggle_af},
         {"Still",       keys_.still},
         {"Record",      record_str},
+        {"Timelapse",   tl_str},
         {"Crosshair",   keys_.crosshair},
-        {"Help",        help_str},
+        {"Help",        keys_.help},
         {"Quit",        quit_str},
     };
     const int n_rows = (int)(sizeof(rows) / sizeof(rows[0]));

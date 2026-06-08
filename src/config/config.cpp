@@ -266,8 +266,8 @@ show_crosshair = false
 # or names: up, down, left, right, space, escape, return, tab.
 # Prefix with "shift+" for shift-modified keys (e.g. "shift+t").
 # "q" always acts as a secondary quit regardless of the quit binding.
-mode_cycle_fwd  = t
-mode_cycle_back = shift+t
+mode_cycle_fwd  = c
+mode_cycle_back = shift+c
 mode_p          = p
 mode_a          = a
 mode_s          = s
@@ -283,11 +283,12 @@ aperture_down   = left
 toggle_af       = shift+a
 still           = space
 record          = shift+r
-timelapse       = l
-crosshair       = c
+timelapse       = t
+crosshair       = x
 quit            = escape
 help            = h
 cam_mode        = v
+help            = h
 
 [remote]
 # Unix socket for headless remote control (e.g. from SSH or scripts).

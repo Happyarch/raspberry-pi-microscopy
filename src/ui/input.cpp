@@ -106,9 +106,9 @@ bool InputHandler::process_events() {
                 continue;
             }
 
-            // ---- Help hold start ----
+            // ---- Help one-shot: press once → show for kHelpShowMs ----
             if (sym == help_sym_ && !shift && !ev.key.repeat)
-                help_held_ = true, help_press_tick_ = SDL_GetTicks64();
+                help_shown_until_ = SDL_GetTicks64() + kHelpShowMs;
 
             // ---- Quit hold start ----
             bool is_quit_key = (sym == quit_sym_) || (sym == SDLK_q && !shift);
@@ -149,8 +149,10 @@ bool InputHandler::process_events() {
             bool shift = (ev.key.keysym.mod & KMOD_SHIFT) != 0;
             SDL_Keycode sym = ev.key.keysym.sym;
 
-            // ---- Help hold release ----
-            if (sym == help_sym_) help_held_ = false;
+            // ---- Help: pressing again dismisses the overlay early ----
+            if (sym == help_sym_ && !shift && !ev.key.repeat &&
+                SDL_GetTicks64() < help_shown_until_)
+                help_shown_until_ = 0;
 
             // ---- Quit hold release ----
             if (quit_held_ && sym == quit_held_sym_) {
@@ -216,8 +218,7 @@ float InputHandler::quit_hold_progress() const {
 }
 
 bool InputHandler::help_visible() const {
-    if (!help_held_) return false;
-    return (SDL_GetTicks64() - help_press_tick_) >= kHelpHoldMs;
+    return SDL_GetTicks64() < help_shown_until_;
 }
 
 float InputHandler::timelapse_hold_progress() const {

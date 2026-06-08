@@ -90,9 +90,8 @@ private:
     uint64_t    quit_press_tick_{0};
     SDL_Keycode quit_sym_{SDLK_ESCAPE};
 
-    // Help hold
-    bool        help_held_{false};
-    uint64_t    help_press_tick_{0};
+    // Help one-shot: visible for kHelpShowMs after a single press
+    uint64_t    help_shown_until_{0};
     SDL_Keycode help_sym_{SDLK_h};
 
     // Camera mode list modal state
@@ -101,5 +100,5 @@ private:
 
     static constexpr uint64_t kRecordHoldMs = 500;
     static constexpr uint64_t kQuitHoldMs   = 5000;
-    static constexpr uint64_t kHelpHoldMs   = 3000;
+    static constexpr uint64_t kHelpShowMs   = 4000;  // auto-dismiss after 4 s
 };
