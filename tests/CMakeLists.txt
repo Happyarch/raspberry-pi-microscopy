@@ -50,3 +50,14 @@ add_executable(test_exposure
 target_include_directories(test_exposure PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_exposure PRIVATE GTest::gtest_main)
 add_test(NAME exposure COMMAND test_exposure)
+
+# ---------------------------------------------------------------------------
+# test_socket_server — exercises the Unix domain socket server (POSIX only)
+# ---------------------------------------------------------------------------
+add_executable(test_socket_server
+    test_socket_server.cpp
+    ${CMAKE_SOURCE_DIR}/src/util/socket_server.cpp
+)
+target_include_directories(test_socket_server PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_socket_server PRIVATE GTest::gtest_main)
+add_test(NAME socket_server COMMAND test_socket_server)

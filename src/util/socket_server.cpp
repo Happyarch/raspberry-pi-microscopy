@@ -19,7 +19,13 @@ static bool set_nonblocking(int fd) {
 SocketServer::SocketServer(const std::string& path) : path_(path) {
     if (path.empty()) return;
 
-    fs::create_directories(fs::path(path).parent_path());
+    std::error_code ec;
+    fs::create_directories(fs::path(path).parent_path(), ec);
+    if (ec) {
+        std::cerr << "[socket] cannot create " << fs::path(path).parent_path()
+                  << ": " << ec.message() << " — socket disabled\n";
+        return;
+    }
     ::unlink(path.c_str()); // remove stale socket
 
     listen_fd_ = ::socket(AF_UNIX, SOCK_STREAM, 0);
