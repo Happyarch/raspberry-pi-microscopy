@@ -29,6 +29,7 @@ pkg_check_modules(SDL2_IMAGE  REQUIRED SDL2_image)
 pkg_check_modules(AVFORMAT    REQUIRED libavformat)
 pkg_check_modules(AVCODEC     REQUIRED libavcodec)
 pkg_check_modules(AVUTIL      REQUIRED libavutil)
+pkg_check_modules(LIBJPEG     REQUIRED libjpeg)
 
 # ---------------------------------------------------------------------------
 # Sources
@@ -45,6 +46,7 @@ add_executable(microscopi
     src/util/resolution.cpp
     src/util/exif_writer.cpp
     src/util/socket_server.cpp
+    src/util/mjpeg_server.cpp
 )
 
 target_include_directories(microscopi PRIVATE
@@ -56,6 +58,7 @@ target_include_directories(microscopi PRIVATE
     ${AVFORMAT_INCLUDE_DIRS}
     ${AVCODEC_INCLUDE_DIRS}
     ${AVUTIL_INCLUDE_DIRS}
+    ${LIBJPEG_INCLUDE_DIRS}
 )
 
 target_link_libraries(microscopi PRIVATE
@@ -66,6 +69,7 @@ target_link_libraries(microscopi PRIVATE
     ${AVFORMAT_LIBRARIES}
     ${AVCODEC_LIBRARIES}
     ${AVUTIL_LIBRARIES}
+    ${LIBJPEG_LIBRARIES}
 )
 
 target_compile_options(microscopi PRIVATE

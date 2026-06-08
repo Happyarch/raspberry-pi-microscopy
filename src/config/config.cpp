@@ -128,6 +128,11 @@ Config load_config(const std::string& path) {
             else if (key == "show_crosshair")   c.show_crosshair  = parse_bool(key, val, c.show_crosshair);
         } else if (section == "remote") {
             if (key == "socket_path") c.socket_path = val;
+        } else if (section == "stream") {
+            if      (key == "stream_port")    c.stream_port    = parse_int  (key, val, c.stream_port);
+            else if (key == "stream_quality") c.stream_quality = parse_int  (key, val, c.stream_quality);
+            else if (key == "stream_scale")   c.stream_scale   = parse_float(key, val, c.stream_scale);
+            else if (key == "stream_fps")     c.stream_fps     = parse_int  (key, val, c.stream_fps);
         } else if (section == "keys") {
             using KF = std::string KeyMap::*;
             static const std::unordered_map<std::string, KF> key_fields = {
@@ -272,6 +277,25 @@ cam_mode        = v
 # Connect with: socat - UNIX-CONNECT:/run/microscopi/microscopi.sock
 # Set to empty to disable: socket_path =
 socket_path = /run/microscopi/microscopi.sock
+
+[stream]
+# HTTP port for the MJPEG live stream and web UI (http://<pi-ip>:8080/).
+# Open in any browser or with: mpv http://<pi-ip>:8080/stream
+stream_port = 8080
+
+# JPEG quality for the MJPEG stream (1–100).
+# Lower values reduce CPU load and network bandwidth. 75 is a good default.
+stream_quality = 75
+
+# Linear scale factor applied before JPEG encoding (0.5 = half resolution).
+# At 1080p input, 0.5 gives 960×540 — roughly 30 % of full-res CPU cost.
+# 1.0 encodes at full camera resolution.
+stream_scale = 0.5
+
+# Maximum frames per second pushed to MJPEG clients.
+# Actual rate is also limited by camera fps and encoder speed.
+# Set to 0 for unlimited (encode every viewfinder frame).
+stream_fps = 15
 )";
     std::cerr << "[config] wrote default config to " << path << "\n";
 }

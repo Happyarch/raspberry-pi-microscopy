@@ -110,7 +110,12 @@
 
 - [ ] **Time-lapse mode** — capture a still every N seconds; configurable from conf.
 
-- [ ] **Network streaming** — optional RTSP or HTTP-MJPEG stream for remote viewing.
+- ✅ **Network streaming** — HTTP-MJPEG stream at `http://<pi>:8080/stream`; browser
+  web UI at `http://<pi>:8080/`; REST control at `POST /api/<cmd>` + `GET /api/status`.
+  Headless operation supported: if SDL2/kmsdrm is unavailable (no display attached), the
+  app continues — camera runs, MJPEG streams, Unix socket control works. Config: `[stream]`
+  section with `stream_port`, `stream_quality`, `stream_scale`, `stream_fps`. JPEG encoded
+  with libjpeg-turbo (direct YUV420 input). Stream config is hot-reloadable via SIGHUP.
 
 - ✅ **Headless/remote control** — Unix domain socket at `/run/microscopi/microscopi.sock`
   (configurable via `socket_path` in `[remote]` config section). Line-based text protocol;

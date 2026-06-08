@@ -55,6 +55,12 @@ struct Config {
     // [remote]
     std::string socket_path{"/run/microscopi/microscopi.sock"};
 
+    // [stream]
+    int   stream_port{8080};
+    int   stream_quality{75};  // JPEG quality 1–100
+    float stream_scale{0.5f}; // linear scale factor (0.5 = half-res)
+    int   stream_fps{15};     // max frames/s pushed to MJPEG clients
+
     // [keys]
     KeyMap keys;
 };

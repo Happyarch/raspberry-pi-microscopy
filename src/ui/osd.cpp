@@ -1,11 +1,18 @@
 #include "osd.h"
 #include <SDL2/SDL_image.h>
 #include <sys/stat.h>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <sstream>
 #include <iomanip>
 #include <filesystem>
+
+static uint64_t now_ms() {
+    using namespace std::chrono;
+    return static_cast<uint64_t>(
+        duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+}
 
 namespace fs = std::filesystem;
 
@@ -457,7 +464,7 @@ void Osd::draw(const OsdState& state) {
 
     // ---- Recording indicator (top-left corner) ----
     if (state.recording) {
-        uint64_t ms    = SDL_GetTicks64() - state.record_start_ms;
+        uint64_t ms    = now_ms() - state.record_start_ms;
         uint64_t total_s = ms / 1000;
         // Arc-seconds: 1/60 of a second. Divides evenly at 30fps and 60fps
         // using only integer arithmetic (no floating-point rounding).
@@ -475,7 +482,7 @@ void Osd::draw(const OsdState& state) {
         int dot_cx = pad_ + dot_r;
         int dot_cy = pad_ + dot_r;
 
-        bool visible = (SDL_GetTicks64() / 500) % 2 == 0;
+        bool visible = (now_ms() / 500) % 2 == 0;
         if (visible) {
             SDL_SetRenderDrawColor(renderer_, 210, 30, 30, 255);
             for (int dy = -dot_r; dy <= dot_r; ++dy)

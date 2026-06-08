@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Microscopi</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#111;color:#ddd;font-family:system-ui,sans-serif;font-size:14px;user-select:none}
+/* Viewer */
+#viewer{position:relative;background:#000;display:flex;justify-content:center;align-items:center;min-height:40vw}
+#stream{max-width:100%;max-height:70vh;display:block;object-fit:contain}
+/* OSD overlay — mirrors the physical bar */
+#osd{
+  position:absolute;bottom:0;left:0;right:0;
+  background:rgba(0,0,0,.65);padding:5px 10px;
+  display:flex;gap:14px;align-items:center;flex-wrap:wrap;
+  font-size:12px;font-family:'Roboto Condensed','Arial Narrow',monospace;letter-spacing:.02em
+}
+.oitem{display:flex;flex-direction:column;align-items:center;gap:1px}
+.oitem .lbl{font-size:9px;text-transform:uppercase;color:#666;letter-spacing:.06em}
+.oitem .val{color:#fff;font-weight:500}
+.oitem .val.dim{color:#666}
+#rec{margin-left:auto;color:#f44;font-weight:700;display:none}
+/* Status message */
+#msg{padding:5px 10px;min-height:22px;font-size:12px;color:#888}
+/* Controls grid */
+#ctrl{padding:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+.grp{background:#1a1a1a;border-radius:6px;padding:9px}
+.grp h3{font-size:10px;text-transform:uppercase;color:#555;letter-spacing:.09em;margin-bottom:7px}
+button{
+  background:#2a2a2a;color:#ccc;border:1px solid #333;border-radius:4px;
+  padding:6px 8px;cursor:pointer;font-size:13px;width:100%;margin-top:4px;transition:background .1s
+}
+button:hover{background:#333}
+button:active{background:#444}
+button.on{background:#1a5c30;border-color:#2a8a50;color:#7fc}
+button.rec-on{background:#5c1a1a;border-color:#8a3030;color:#faa}
+.row{display:flex;gap:5px}
+.row button{flex:1}
+input[type=range]{width:100%;margin:5px 0;accent-color:#4af;cursor:pointer}
+select{
+  width:100%;background:#2a2a2a;color:#ccc;border:1px solid #333;
+  border-radius:4px;padding:5px;font-size:13px;margin-top:4px;cursor:pointer
+}
+</style>
+</head>
+<body>
+
+<div id="viewer">
+  <img id="stream" src="/stream" alt="Connecting to camera…">
+  <div id="osd">
+    <div class="oitem"><div class="lbl">mode</div><div class="val" id="o-mode">P</div></div>
+    <div class="oitem"><div class="lbl">shutter</div><div class="val dim" id="o-shut">---</div></div>
+    <div class="oitem"><div class="lbl">iso</div><div class="val dim" id="o-iso">AUTO</div></div>
+    <div class="oitem"><div class="lbl">aperture</div><div class="val" id="o-ap">f/--</div></div>
+    <div class="oitem"><div class="lbl">focus</div><div class="val" id="o-foc">AF</div></div>
+    <div id="rec">&#9679; REC <span id="rec-t">00:00</span></div>
+  </div>
+</div>
+
+<div id="msg"></div>
+
+<div id="ctrl">
+
+  <div class="grp">
+    <h3>Capture</h3>
+    <button id="btn-still">&#128247; Still</button>
+    <button id="btn-rec">&#9654; Record</button>
+  </div>
+
+  <div class="grp">
+    <h3>Mode</h3>
+    <div class="row">
+      <button id="mp" onclick="setMode('p')">P</button>
+      <button id="ma" onclick="setMode('a')">A</button>
+      <button id="ms" onclick="setMode('s')">S</button>
+      <button id="mm" onclick="setMode('m')">M</button>
+    </div>
+    <button id="btn-ae" onclick="toggleAe()">AE: ON</button>
+    <button id="btn-af" onclick="toggleAf()">AF: ON</button>
+  </div>
+
+  <div class="grp">
+    <h3>Focus</h3>
+    <input type="range" id="fslider" min="0" max="100" value="50">
+    <div class="row">
+      <button onclick="cmd('focus down')">&#8593; Near</button>
+      <button onclick="cmd('focus up')">&#8595; Far</button>
+    </div>
+  </div>
+
+  <div class="grp">
+    <h3>ISO</h3>
+    <select id="iso-sel" onchange="setIso(this.value)">
+      <option value="auto">AUTO</option>
+      <option value="100">100</option>
+      <option value="200">200</option>
+      <option value="400">400</option>
+      <option value="800">800</option>
+      <option value="1600">1600</option>
+      <option value="3200">3200</option>
+      <option value="6400">6400</option>
+    </select>
+  </div>
+
+  <div class="grp">
+    <h3>Shutter</h3>
+    <select id="shut-sel" onchange="setShutter(this.value)">
+      <option value="500000">2"</option>
+      <option value="250000">1"</option>
+      <option value="125000">1/8</option>
+      <option value="50000">1/20</option>
+      <option value="33333">1/30</option>
+      <option value="16667" selected>1/60</option>
+      <option value="8333">1/120</option>
+      <option value="4000">1/250</option>
+      <option value="2000">1/500</option>
+      <option value="1000">1/1000</option>
+      <option value="500">1/2000</option>
+      <option value="250">1/4000</option>
+    </select>
+  </div>
+
+</div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const msg = t => { $('msg').textContent = t; };
+
+let ae = true, af = true, recording = false, recStart = 0, recTick = null;
+
+// --- API call ---
+async function cmd(c) {
+  try {
+    const r = await fetch('/api/' + encodeURIComponent(c), {method:'POST'});
+    const t = (await r.text()).trim();
+    msg(t);
+    return t;
+  } catch(e) { msg('Connection lost'); return 'ERR'; }
+}
+
+// --- Controls ---
+function setMode(m) {
+  cmd('mode ' + m);
+  ['p','a','s','m'].forEach(x => $('m'+x).classList.remove('on'));
+  $('m'+m).classList.add('on');
+}
+function toggleAe() {
+  ae = !ae;
+  cmd('ae ' + (ae?'on':'off'));
+  $('btn-ae').textContent = 'AE: ' + (ae?'ON':'OFF');
+  $('btn-ae').classList.toggle('on', ae);
+}
+function toggleAf() {
+  af = !af;
+  cmd('af ' + (af?'on':'off'));
+  $('btn-af').textContent = 'AF: ' + (af?'ON':'OFF');
+  $('btn-af').classList.toggle('on', af);
+}
+function setIso(v) { cmd(v==='auto'?'iso auto':'iso '+v); }
+function setShutter(us) { cmd('shutter '+us); }
+
+// Focus slider with debounce
+let fTimer = null;
+$('fslider').addEventListener('input', function() {
+  const pos = (this.value/100).toFixed(2);
+  clearTimeout(fTimer);
+  fTimer = setTimeout(() => cmd('focus '+pos), 80);
+});
+
+// Still capture
+$('btn-still').addEventListener('click', async function() {
+  this.disabled = true;
+  msg('Capturing…');
+  const r = await cmd('still');
+  this.disabled = false;
+  if (r.startsWith('OK ')) msg('Saved: ' + r.slice(3).trim().split('/').pop());
+});
+
+// Record toggle
+$('btn-rec').addEventListener('click', async function() {
+  if (!recording) {
+    const r = await cmd('record_start');
+    if (r.startsWith('OK')) {
+      recording = true; recStart = Date.now();
+      this.innerHTML = '&#9646;&#9646; Stop';
+      this.classList.add('rec-on');
+      $('rec').style.display = 'block';
+      recTick = setInterval(tickRec, 1000);
+    }
+  } else {
+    await cmd('record_stop');
+    stopRec();
+  }
+});
+
+function tickRec() {
+  const s = Math.floor((Date.now()-recStart)/1000);
+  $('rec-t').textContent = String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+}
+function stopRec() {
+  recording = false;
+  clearInterval(recTick); recTick = null;
+  $('btn-rec').innerHTML = '&#9654; Record';
+  $('btn-rec').classList.remove('rec-on');
+  $('rec').style.display = 'none';
+}
+
+// --- Status polling ---
+function fmtShutter(us) {
+  if (!us || us <= 0) return '---';
+  const s = us/1e6;
+  return s < 0.5 ? '1/'+Math.round(1/s) : s.toFixed(1)+'"';
+}
+
+let lastSeq = -1;
+async function pollStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const st = await r.json();
+
+    // OSD
+    $('o-mode').textContent = st.mode||'--';
+    const sm = st.mode==='S'||st.mode==='M';
+    $('o-shut').textContent = fmtShutter(st.shutter_us);
+    $('o-shut').className = 'val'+(sm?'':' dim');
+    $('o-iso').textContent = st.iso===0?'AUTO':st.iso;
+    $('o-iso').className = 'val'+(st.iso===0?' dim':'');
+    $('o-ap').textContent = st.aperture>0?'f/'+st.aperture.toFixed(1):'f/--';
+    const lp = st.lens_pos;
+    $('o-foc').textContent = (lp<0||st.af)?'AF':lp.toFixed(2);
+
+    // Sync recording state
+    if (st.recording && !recording) {
+      recording = true; recStart = Date.now();
+      $('btn-rec').innerHTML = '&#9646;&#9646; Stop';
+      $('btn-rec').classList.add('rec-on');
+      $('rec').style.display = 'block';
+      recTick = setInterval(tickRec, 1000);
+    } else if (!st.recording && recording) {
+      stopRec();
+    }
+
+    // Sync focus slider (only if not being dragged)
+    if (!$('fslider').matches(':active') && lp >= 0)
+      $('fslider').value = Math.round(lp*100);
+
+    // Sync AE/AF buttons
+    if (st.af !== af) { af = st.af; $('btn-af').textContent='AF: '+(af?'ON':'OFF'); $('btn-af').classList.toggle('on',af); }
+    if (st.ae !== ae) { ae = st.ae; $('btn-ae').textContent='AE: '+(ae?'ON':'OFF'); $('btn-ae').classList.toggle('on',ae); }
+
+    // Sync mode buttons
+    const m = (st.mode||'P').toLowerCase();
+    ['p','a','s','m'].forEach(x => $('m'+x).classList.toggle('on', x===m));
+
+  } catch(e) { /* connection lost — keep retrying */ }
+  setTimeout(pollStatus, 500);
+}
+
+pollStatus();
+</script>
+</body>
+</html>

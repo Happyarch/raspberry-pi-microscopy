@@ -6,6 +6,7 @@
 #include "ui/renderer.h"
 #include "util/exif_writer.h"
 #include "util/exposure.h"
+#include "util/mjpeg_server.h"
 #include "util/resolution.h"
 #include "util/socket_server.h"
 
@@ -17,6 +18,7 @@
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -24,7 +26,17 @@
 namespace fs = std::filesystem;
 
 static std::atomic<bool> g_reload_config{false};
-static void handle_sighup(int) { g_reload_config.store(true, std::memory_order_relaxed); }
+static std::atomic<bool> g_quit{false};
+
+static void handle_sighup(int)  { g_reload_config.store(true,  std::memory_order_relaxed); }
+static void handle_sigterm(int) { g_quit.store(true, std::memory_order_relaxed); }
+
+// Monotonic millisecond timestamp — shared clock for recording timer, replaces SDL_GetTicks64
+static uint64_t now_ms() {
+    using namespace std::chrono;
+    return static_cast<uint64_t>(
+        duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+}
 
 static std::string user_config_path() {
     const char* home = std::getenv("HOME");
@@ -69,32 +81,44 @@ static std::string timestamp_filename(const std::string& ext) {
 // ---------------------------------------------------------------------------
 
 int main() {
-    std::signal(SIGHUP, handle_sighup);
+    std::signal(SIGHUP,  handle_sighup);
+    std::signal(SIGTERM, handle_sigterm);
 
     std::string config_path = resolve_config_path();
     Config cfg = load_config(config_path);
 
+    // ---- Display initialisation (non-fatal — falls back to headless) ----
+    bool headless = false;
+    int  rw = cfg.fallback_width;
+    int  rh = cfg.fallback_height;
+
     setenv("SDL_VIDEODRIVER", "kmsdrm", 1);
     setenv("SDL_AUDIODRIVER", "dummy",  1);
     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
-        std::cerr << "SDL_Init: " << SDL_GetError() << "\n";
-        return 1;
+        std::cerr << "[display] SDL_Init: " << SDL_GetError()
+                  << " — running headless (MJPEG + socket control only)\n";
+        headless = true;
+    } else {
+        Resolution res = select_best_resolution(0, {cfg.fallback_width, cfg.fallback_height});
+        rw = res.width;
+        rh = res.height;
     }
 
-    Resolution res = select_best_resolution(0, {cfg.fallback_width, cfg.fallback_height});
+    std::unique_ptr<Renderer>     renderer;
+    std::unique_ptr<Osd>          osd;
 
-    Renderer renderer(res.width, res.height);
-    renderer.set_crop(cfg.crop_top, cfg.crop_bottom, cfg.crop_left, cfg.crop_right);
-    const int rw = renderer.width();
-    const int rh = renderer.height();
+    if (!headless) {
+        const char* home      = std::getenv("HOME");
+        std::string home_str  = home ? home : "/root";
+        std::string cache_dir = ensure_dir(home_str + "/.cache/microscopi");
+        std::string icons_dir = "/usr/local/share/microscopi/icons";
+        std::string font_path = "/usr/local/share/microscopi/fonts/RobotoCondensed-Regular.ttf";
 
-    const char* home      = std::getenv("HOME");
-    std::string home_str  = home ? home : "/root";
-    std::string cache_dir = ensure_dir(home_str + "/.cache/microscopi");
-    std::string icons_dir = "/usr/local/share/microscopi/icons";
-    std::string font_path = "/usr/local/share/microscopi/fonts/RobotoCondensed-Regular.ttf";
-
-    Osd osd(renderer.sdl_renderer(), rw, rh, icons_dir, font_path, cache_dir, cfg.keys);
+        renderer = std::make_unique<Renderer>(rw, rh);
+        renderer->set_crop(cfg.crop_top, cfg.crop_bottom, cfg.crop_left, cfg.crop_right);
+        osd      = std::make_unique<Osd>(renderer->sdl_renderer(), rw, rh,
+                                         icons_dir, font_path, cache_dir, cfg.keys);
+    }
 
     Camera camera(cfg.camera_index);
     if (!camera.start(rw, rh, cfg.fps)) {
@@ -103,11 +127,13 @@ int main() {
     }
 
     Encoder encoder(cfg.video_backend,
-                    res.width, res.height, cfg.fps,
+                    rw, rh, cfg.fps,
                     cfg.builtin_bitrate,
                     cfg.ffmpeg_command);
 
     SocketServer sock(cfg.socket_path);
+
+    MjpegServer mjpeg(cfg.stream_port, cfg.stream_quality, cfg.stream_scale, cfg.stream_fps);
 
     // ---- Camera mode list (built once after camera starts) ----
     std::vector<CameraMode>  cam_modes     = camera.get_modes();
@@ -124,8 +150,7 @@ int main() {
     int  cam_mode_selected = cam_mode_active;
     bool cam_mode_open     = false;
 
-    // ---- Control ladders — built from camera-reported ranges ----
-    // Falls back to the full master table if the camera doesn't expose that control.
+    // ---- Control ladders ----
     auto make_shutter_ladder = [&]() -> std::vector<float> {
         auto r = camera.shutter_range();
         return r.available
@@ -142,7 +167,7 @@ int main() {
         auto r = camera.aperture_range();
         return r.available
             ? build_aperture_ladder(r.min, r.max)
-            : std::vector<float>{}; // empty = fixed-aperture camera
+            : std::vector<float>{};
     };
     std::vector<float> shutter_ladder  = make_shutter_ladder();
     std::vector<int>   iso_ladder      = make_iso_ladder();
@@ -164,18 +189,16 @@ int main() {
     // Exposure state
     ExposureMode mode      = ExposureMode::P;
     int          mode_idx  = 0;
-    float        shutter_us   = 16667.0f; // 1/60 s starting point for S/M
+    float        shutter_us   = 16667.0f;
     int          shutter_step = shutter_index(shutter_us, shutter_ladder);
-    int          iso          = 0;        // 0 = AUTO
+    int          iso          = 0;
     int          iso_step     = 0;
-    float        aperture_fs  = cfg.initial_aperture; // f-stop; 0 = unknown/not set
+    float        aperture_fs  = cfg.initial_aperture;
     int          aperture_step = aperture_ladder.empty() ? 0
                                : aperture_index(aperture_fs, aperture_ladder);
 
     if (aperture_fs > 0.0f) camera.set_aperture(aperture_fs);
-
-    // Apply initial camera state.
-    camera.set_ae_enable(true);  // start in P mode (full auto)
+    camera.set_ae_enable(true);
     camera.set_af_enable(af_enabled);
 
     auto apply_mode = [&](ExposureMode m) {
@@ -186,7 +209,6 @@ int main() {
             camera.set_ae_enable(true);
             break;
         case ExposureMode::A:
-            // Auto shutter, user-set ISO — keep AE on for shutter.
             camera.set_ae_enable(true);
             if (iso != 0) camera.set_iso(iso);
             break;
@@ -213,7 +235,7 @@ int main() {
                       : aperture_index(aperture_fs, aperture_ladder);
     };
 
-    // ---- Input callbacks ----
+    // ---- Input callbacks (defined for both headed and headless; only wired in headed mode) ----
     InputCallbacks cbs;
 
     cbs.on_quit = [&]{ should_quit = true; };
@@ -302,29 +324,30 @@ int main() {
 
     cbs.on_toggle_crosshair = [&]{ show_crosshair = !show_crosshair; };
 
-    cbs.on_still = [&]{
-        std::string dir  = ensure_dir(cfg.stills_dir);
-        std::string path = dir + "/" + timestamp_filename(".jpg");
-        if (camera.capture_still(path, still_fmt)) {
-            ++still_count;
-            // Inject EXIF into the JPEG (not applicable for raw-only).
-            if (still_fmt != StillFormat::RAW) {
-                CameraStatus st = camera.get_status();
-                ExifParams exif;
-                exif.exposure_us   = st.exposure_time;
-                exif.fstop         = (st.aperture > 0) ? st.aperture : aperture_fs;
-                exif.iso           = (iso != 0) ? iso : st.iso;
-                exif.lens_position = st.lens_position;
-                exif.exposure_mode = mode_idx;
-                exif.camera_model  = camera.model_name();
-                time_t now = time(nullptr);
-                struct tm* tm_info = localtime(&now);
-                char dtbuf[20];
-                strftime(dtbuf, sizeof(dtbuf), "%Y:%m:%d %H:%M:%S", tm_info);
-                exif.datetime = dtbuf;
-                insert_exif(path, exif);
-            }
+    auto do_still = [&](std::string path) -> bool {
+        if (!camera.capture_still(path, still_fmt)) return false;
+        ++still_count;
+        if (still_fmt != StillFormat::RAW) {
+            CameraStatus st = camera.get_status();
+            ExifParams exif;
+            exif.exposure_us   = st.exposure_time;
+            exif.fstop         = (st.aperture > 0) ? st.aperture : aperture_fs;
+            exif.iso           = (iso != 0) ? iso : st.iso;
+            exif.lens_position = st.lens_position;
+            exif.exposure_mode = mode_idx;
+            exif.camera_model  = camera.model_name();
+            time_t now_t = time(nullptr);
+            struct tm* tm_info = localtime(&now_t);
+            char dtbuf[20];
+            strftime(dtbuf, sizeof(dtbuf), "%Y:%m:%d %H:%M:%S", tm_info);
+            exif.datetime = dtbuf;
+            insert_exif(path, exif);
         }
+        return true;
+    };
+
+    cbs.on_still = [&]{
+        do_still(ensure_dir(cfg.stills_dir) + "/" + timestamp_filename(".jpg"));
     };
 
     cbs.on_focus_scroll = [&](int dir) {
@@ -336,7 +359,7 @@ int main() {
 
     cbs.on_cam_mode_toggle = [&]{
         cam_mode_open     = !cam_mode_open;
-        cam_mode_selected = cam_mode_active; // reset selection to current
+        cam_mode_selected = cam_mode_active;
     };
     cbs.on_cam_mode_up = [&]{
         int n = (int)cam_modes.size();
@@ -346,15 +369,13 @@ int main() {
         int n = (int)cam_modes.size();
         cam_mode_selected = (cam_mode_selected + 1) % n;
     };
-    cbs.on_cam_mode_cancel = [&]{
-        cam_mode_open = false;
-    };
+    cbs.on_cam_mode_cancel = [&]{ cam_mode_open = false; };
     cbs.on_cam_mode_confirm = [&]{
         cam_mode_open = false;
-        if (cam_mode_selected == cam_mode_active) return; // no change
+        if (cam_mode_selected == cam_mode_active) return;
         const CameraMode& m = cam_modes[cam_mode_selected];
         if (camera.restart_with_mode(m)) {
-            renderer.update_texture_size(camera.width(), camera.height());
+            if (renderer) renderer->update_texture_size(camera.width(), camera.height());
             cam_mode_active   = find_active_mode();
             cam_mode_selected = cam_mode_active;
             rebuild_ladders();
@@ -363,11 +384,10 @@ int main() {
 
     cbs.on_record_toggle = [&]{
         if (!recording) {
-            std::string dir  = ensure_dir(cfg.video_dir);
-            std::string path = dir + "/" + timestamp_filename(".mkv");
+            std::string path = ensure_dir(cfg.video_dir) + "/" + timestamp_filename(".mkv");
             if (encoder.open(path)) {
                 recording    = true;
-                record_start = SDL_GetTicks64();
+                record_start = now_ms();
             }
         } else {
             encoder.close();
@@ -375,9 +395,13 @@ int main() {
         }
     };
 
-    InputHandler input(std::move(cbs), cfg.keys);
+    // InputHandler only exists when SDL is available
+    std::unique_ptr<InputHandler> input;
+    if (!headless) {
+        input = std::make_unique<InputHandler>(std::move(cbs), cfg.keys);
+    }
 
-    // ---- Socket command dispatch ----
+    // ---- Socket + MJPEG command dispatch ----
     static const char* kModeNames[] = {"P", "A", "S", "M"};
 
     auto dispatch_cmd = [&](const std::string& line) -> std::string {
@@ -416,24 +440,7 @@ int main() {
 
         if (verb == "still") {
             std::string path = ensure_dir(cfg.stills_dir) + "/" + timestamp_filename(".jpg");
-            if (!camera.capture_still(path, still_fmt)) return "ERR capture failed";
-            ++still_count;
-            if (still_fmt != StillFormat::RAW) {
-                CameraStatus st = camera.get_status();
-                ExifParams exif;
-                exif.exposure_us   = st.exposure_time;
-                exif.fstop         = (st.aperture > 0) ? st.aperture : aperture_fs;
-                exif.iso           = (iso != 0) ? iso : st.iso;
-                exif.lens_position = st.lens_position;
-                exif.exposure_mode = mode_idx;
-                exif.camera_model  = camera.model_name();
-                time_t now = time(nullptr);
-                struct tm* tm_info = localtime(&now);
-                char dtbuf[20];
-                strftime(dtbuf, sizeof(dtbuf), "%Y:%m:%d %H:%M:%S", tm_info);
-                exif.datetime = dtbuf;
-                insert_exif(path, exif);
-            }
+            if (!do_still(path)) return "ERR capture failed";
             return "OK " + path;
         }
 
@@ -442,7 +449,7 @@ int main() {
             std::string path = ensure_dir(cfg.video_dir) + "/" + timestamp_filename(".mkv");
             if (!encoder.open(path)) return "ERR encoder open failed";
             recording    = true;
-            record_start = SDL_GetTicks64();
+            record_start = now_ms();
             return "OK " + path;
         }
 
@@ -537,7 +544,7 @@ int main() {
     int cam_fail_count = 0;
 
     // ---- Main loop ----
-    while (!should_quit) {
+    while (!should_quit && !g_quit.load()) {
         // ---- SIGHUP config hot-reload ----
         if (g_reload_config.exchange(false)) {
             Config nc = load_config(config_path);
@@ -550,7 +557,10 @@ int main() {
             cfg.show_crosshair    = nc.show_crosshair;
             cfg.stills_dir        = nc.stills_dir;
             cfg.video_dir         = nc.video_dir;
-            renderer.set_crop(cfg.crop_top, cfg.crop_bottom, cfg.crop_left, cfg.crop_right);
+            cfg.stream_quality    = nc.stream_quality;
+            cfg.stream_fps        = nc.stream_fps;
+            cfg.stream_scale      = nc.stream_scale;
+            if (renderer) renderer->set_crop(cfg.crop_top, cfg.crop_bottom, cfg.crop_left, cfg.crop_right);
             show_crosshair = cfg.show_crosshair;
             std::cerr << "[config] reloaded from " << config_path << "\n";
         }
@@ -562,13 +572,24 @@ int main() {
                 sock.reply(dispatch_cmd(cmd));
         }
 
-        input.set_mode_list_open(cam_mode_open);
-        if (!input.process_events()) break;
+        // ---- MJPEG REST command queue ----
+        {
+            std::string cmd;
+            std::function<void(const std::string&)> reply_fn;
+            while (mjpeg.pop_command(cmd, reply_fn))
+                reply_fn(dispatch_cmd(cmd));
+        }
+
+        // ---- SDL input (headed only) ----
+        if (input) {
+            input->set_mode_list_open(cam_mode_open);
+            if (!input->process_events()) break;
+        }
 
         CameraFrame frame;
         if (!camera.get_frame(frame)) {
             // ---- Graceful camera re-init ----
-            if (++cam_fail_count < 30) continue; // tolerate brief stalls
+            if (++cam_fail_count < 30) continue;
             cam_fail_count = 0;
             std::cerr << "[camera] no frames — attempting reconnect\n";
             if (recording) { encoder.close(); recording = false; }
@@ -589,6 +610,11 @@ int main() {
             encoder.submit_frame(frame.y, frame.u, frame.v,
                                  frame.y_stride, frame.uv_stride);
 
+        // Push raw viewfinder frame to MJPEG server before OSD is composited
+        mjpeg.push_frame(frame.y, frame.u, frame.v,
+                         frame.width, frame.height,
+                         frame.y_stride, frame.uv_stride);
+
         CameraStatus status         = camera.get_status();
         osd_state.aperture          = status.aperture;
         osd_state.exposure_us       = status.exposure_time;
@@ -599,16 +625,38 @@ int main() {
         osd_state.still_count       = still_count;
         osd_state.recording         = recording;
         osd_state.record_start_ms   = record_start;
-        osd_state.record_hold_progress = input.record_hold_progress();
-        osd_state.quit_hold_progress   = input.quit_hold_progress();
-        osd_state.show_crosshair       = show_crosshair;
-        osd_state.show_help            = input.help_visible();
-        osd_state.mode_list            = {cam_mode_open, cam_mode_selected,
-                                          cam_mode_active, &cam_mode_labels};
+        osd_state.show_crosshair    = show_crosshair;
+        osd_state.mode_list         = {cam_mode_open, cam_mode_selected,
+                                       cam_mode_active, &cam_mode_labels};
+        if (input) {
+            osd_state.record_hold_progress = input->record_hold_progress();
+            osd_state.quit_hold_progress   = input->quit_hold_progress();
+            osd_state.show_help            = input->help_visible();
+        }
 
-        renderer.present_frame(frame.y, frame.u, frame.v,
-                               frame.y_stride, frame.uv_stride,
-                               &osd, osd_state);
+        // Build status JSON for MJPEG /api/status
+        {
+            std::ostringstream j;
+            j << "{"
+              << "\"mode\":\"" << kModeNames[mode_idx] << "\""
+              << ",\"iso\":"        << (iso != 0 ? iso : status.iso)
+              << ",\"shutter_us\":" << status.exposure_time
+              << ",\"aperture\":"   << status.aperture
+              << ",\"lens_pos\":"   << (std::isnan(status.lens_position) ? -1.0f : status.lens_position)
+              << ",\"af\":"         << (af_enabled     ? "true" : "false")
+              << ",\"ae\":"         << (status.ae_enabled ? "true" : "false")
+              << ",\"recording\":"  << (recording      ? "true" : "false")
+              << ",\"still_count\":" << still_count
+              << ",\"dual_stream\":" << (camera.dual_stream() ? "true" : "false")
+              << "}";
+            mjpeg.set_status(j.str());
+        }
+
+        if (renderer) {
+            renderer->present_frame(frame.y, frame.u, frame.v,
+                                    frame.y_stride, frame.uv_stride,
+                                    osd.get(), osd_state);
+        }
         frame.release();
     }
 
