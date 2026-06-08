@@ -62,9 +62,8 @@
   lens-position delta per keyboard Up/Down press. Scroll-wheel step remains separately
   configurable via `focus_scroll_step`.
 
-- [ ] **OSD icon color** — Lucide icons are black by default; they need to be white for the
-  dark OSD bar. Either tint via `SDL_SetTextureColorMod(tex, 255, 255, 255)` after inverting,
-  or pre-process the SVGs to use `stroke="white"` before calling rsvg-convert.
+- ✅ **OSD icon color** — implemented: all SVG icons in `assets/icons/` have `stroke="white"`,
+  so rsvg-convert renders them white directly. No runtime tinting needed.
 
 - [ ] **Font weight** — Roboto Condensed [wght] is a variable font. TTF_OpenFont loads at
   default weight (400). Expose weight selection or switch to a static Regular TTF.
@@ -79,8 +78,9 @@
   `focus_key_step`, `show_crosshair`, `stills_dir`, `video_dir`. Camera/display/key settings
   require a full restart.
 
-- [ ] **pi-gen STAGE_LIST** — verify that pi-gen accepts `stage3-microscopy` as a custom stage
-  name; the standard convention uses `stage3`. Rename if needed.
+- ✅ **pi-gen STAGE_LIST** — implemented: `config/pi-gen/config` sets
+  `STAGE_LIST="stage0 stage1 stage2 stage3-microscopi"` and `build-image.sh` copies
+  the stage into pi-gen as `stage3-microscopi`. Standard stages 3–5 are SKIPped.
 
 ## Low Priority / Future
 
@@ -123,7 +123,9 @@
 
 - [ ] **White balance control** — expose `AwbEnable` and manual `ColourGains`.
 
-- [ ] **ISO display** — add ISO to the OSD bar once the analogue gain → ISO mapping is confirmed.
+- ✅ **ISO display** — implemented: ISO is shown in the OSD bar (`osd.cpp`). Mapping is
+  `ISO ≈ AnalogueGain × 100` (confirmed in `src/util/exposure.h`); displayed as AUTO or
+  numeric value with a gauge icon.
 
 - [ ] **Bluetooth image sync** — allow the user to pull captured stills/videos to a phone or
   laptop over Bluetooth without plugging in a cable. Options to explore: BlueZ OBEX Object
