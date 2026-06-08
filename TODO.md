@@ -5,19 +5,18 @@
 - ✅ **SDL texture format bug** — fixed: `renderer.cpp` uses `SDL_PIXELFORMAT_IYUV` (I420,
   Y then U then V) matching libcamera's YUV420 planar output order.
 
-- [ ] **libcamera Viewfinder format** — confirmed that Viewfinder role defaults to XRGB8888,
-  not YUV420. `camera.cpp` already sets `pixelFormat = formats::YUV420` explicitly, which
-  is correct, but after `validate()` the driver may adjust the format. Add a check that
-  the configured format is actually YUV420 before starting the loop, and log a clear
-  error if not.
+- ✅ **libcamera Viewfinder format** — after `cam_->configure()` returns, `camera.cpp` now
+  checks `cfg_->at(0).pixelFormat == formats::YUV420` and logs a clear error + returns
+  false if the driver adjusted it away. Prevents silent garbage output in both the renderer
+  and the MJPEG encoder.
 
 - ✅ **`microscopi` user group membership** — implemented: `stage3-microscopi/01-microscopi/00-run.sh`
   runs `usermod -aG video,render,audio,input microscopi` in the chroot so the camera
   (`/dev/video*`) and DRM display (`/dev/dri/*`) are accessible without root.
 
-- [ ] **SDL2 kmsdrm on Pi OS Bookworm** — confirm that SDL2 ships with the kmsdrm backend
-  enabled in the Bookworm package. If not, build SDL2 from source with
-  `--enable-video-kmsdrm`.
+- ✅ **SDL2 kmsdrm on Pi OS Bookworm** — confirmed: `libsdl2-2.0-0` 2.26.5+dfsg-1 on
+  Bookworm includes the kmsdrm backend (`KMSDRM_VideoInit` present in the shared library,
+  `libdrm2` and `libgbm1` listed as package dependencies). No source build needed.
 
 - [ ] **Change default root password** before any real deployment (currently `microscopy`).
 

@@ -73,6 +73,16 @@ bool Camera::start(int width, int height, int fps) {
 
     if (cam_->configure(cfg_.get()) != 0) return false;
 
+    // After configure() the driver may have adjusted the requested format.
+    // Viewfinder defaults to XRGB8888; if validate() silently accepted it the
+    // renderer and MJPEG encoder (both expect YUV420) would produce garbage.
+    if (cfg_->at(0).pixelFormat != formats::YUV420) {
+        std::cerr << "[camera] ERROR: driver adjusted viewfinder pixelFormat from YUV420 to "
+                  << cfg_->at(0).pixelFormat.toString()
+                  << " — cannot render or stream. Check libcamera version.\n";
+        return false;
+    }
+
     vf_stream_ = cfg_->at(0).stream();
     allocator_  = new FrameBufferAllocator(cam_);
     if (allocator_->allocate(vf_stream_) < 0) return false;
