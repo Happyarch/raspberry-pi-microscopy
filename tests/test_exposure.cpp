@@ -189,7 +189,33 @@ TEST(IsoStepping, StepDownFromMin) {
 }
 
 // ---------------------------------------------------------------------------
-// Aperture ladder
+// Aperture master table invariants
+// ---------------------------------------------------------------------------
+
+static std::vector<float> full_aperture() {
+    return {kApertureMaster.begin(), kApertureMaster.end()};
+}
+
+TEST(ApertureMaster, Size) {
+    // 31 = 10 full stops × 3 third-stops + 1 (f/1.0 … f/32.0)
+    EXPECT_EQ(kApertureMaster.size(), 31u);
+}
+
+TEST(ApertureMaster, StartsAtF1EndsAtF32) {
+    EXPECT_FLOAT_EQ(kApertureMaster.front(), 1.0f);
+    EXPECT_FLOAT_EQ(kApertureMaster.back(), 32.0f);
+}
+
+TEST(ApertureMaster, FullStopsPresent) {
+    // Every full stop (×2 in area = ×√2 in f-number) must appear.
+    for (float stop : {1.0f, 1.4f, 2.0f, 2.8f, 4.0f, 5.6f, 8.0f, 11.0f, 16.0f, 22.0f, 32.0f}) {
+        auto it = std::find(kApertureMaster.begin(), kApertureMaster.end(), stop);
+        EXPECT_NE(it, kApertureMaster.end()) << "f/" << stop << " missing from kApertureMaster";
+    }
+}
+
+// ---------------------------------------------------------------------------
+// build_aperture_ladder
 // ---------------------------------------------------------------------------
 
 TEST(BuildApertureLadder, FullRangeReturnsAll) {
@@ -203,8 +229,101 @@ TEST(BuildApertureLadder, ResultIsAscending) {
         EXPECT_GT(ladder[i], ladder[i - 1]);
 }
 
+TEST(BuildApertureLadder, NarrowRangeClampsBothEnds) {
+    // f/2.0 – f/5.6: only steps within that window should appear.
+    auto ladder = build_aperture_ladder(2.0f, 5.6f);
+    EXPECT_GE(ladder.size(), 1u);
+    for (float f : ladder) {
+        EXPECT_GE(f, 2.0f);
+        EXPECT_LE(f, 5.6f);
+    }
+}
+
+TEST(BuildApertureLadder, ImpossibleRangeReturnsOneFallback) {
+    // f/33 is above f/32 — no master step qualifies; should get the clamped fallback.
+    auto ladder = build_aperture_ladder(33.0f, 64.0f);
+    EXPECT_EQ(ladder.size(), 1u);
+}
+
+// ---------------------------------------------------------------------------
+// aperture_index — exact and nearest-neighbour (log2 distance)
+// ---------------------------------------------------------------------------
+
 TEST(ApertureIndex, ExactMatches) {
-    auto ladder = build_aperture_ladder(1.0f, 32.0f);
-    EXPECT_FLOAT_EQ(ladder[aperture_index(2.8f, ladder)], 2.8f);
-    EXPECT_FLOAT_EQ(ladder[aperture_index(8.0f, ladder)], 8.0f);
+    auto ladder = full_aperture();
+    for (float f : {1.0f, 1.4f, 2.8f, 5.6f, 8.0f, 16.0f, 32.0f})
+        EXPECT_FLOAT_EQ(ladder[aperture_index(f, ladder)], f) << "f/" << f;
+}
+
+TEST(ApertureIndex, InBounds) {
+    auto ladder = full_aperture();
+    for (float f : {0.5f, 1.0f, 5.0f, 32.0f, 100.0f}) {
+        int idx = aperture_index(f, ladder);
+        EXPECT_GE(idx, 0);
+        EXPECT_LT(idx, (int)ladder.size());
+    }
+}
+
+TEST(ApertureIndex, LogSpaceNearestNeighbour) {
+    auto ladder = full_aperture();
+
+    // f/1.15 sits at the linear midpoint between f/1.1 and f/1.2 (equal linear
+    // distance to both). The geometric midpoint is sqrt(1.1 × 1.2) ≈ 1.149, so
+    // f/1.15 is above it — log2 distance to f/1.2 (0.061) is less than to f/1.1
+    // (0.064). The old linear-distance code would pick f/1.1 (tie → lower index).
+    EXPECT_FLOAT_EQ(ladder[aperture_index(1.15f, ladder)], 1.2f);
+
+    // f/1.13 is below the geometric midpoint → still maps to f/1.1.
+    EXPECT_FLOAT_EQ(ladder[aperture_index(1.13f, ladder)], 1.1f);
+
+    // Same verification at the high end: f/23.5 is above sqrt(22 × 25) ≈ 23.45 →
+    // log2 distance to f/25 is smaller.
+    EXPECT_FLOAT_EQ(ladder[aperture_index(23.5f, ladder)], 25.0f);
+
+    // f/23.0 is clearly below the geometric midpoint → f/22.
+    EXPECT_FLOAT_EQ(ladder[aperture_index(23.0f, ladder)], 22.0f);
+}
+
+// ---------------------------------------------------------------------------
+// Aperture stepping
+// ---------------------------------------------------------------------------
+
+TEST(ApertureStepping, StepUpFromMax) {
+    auto ladder = full_aperture();
+    int idx  = (int)ladder.size() - 1;
+    int next = std::min((int)ladder.size() - 1, idx + 1);
+    EXPECT_EQ(next, idx); // clamps at narrowest aperture
+}
+
+TEST(ApertureStepping, StepDownFromMin) {
+    EXPECT_EQ(std::max(0, 0 - 1), 0); // clamps at widest aperture
+}
+
+TEST(ApertureStepping, StepUpNarrowsAperture) {
+    auto ladder = full_aperture();
+    int idx  = aperture_index(5.6f, ladder);
+    int next = std::min((int)ladder.size() - 1, idx + 1);
+    EXPECT_GT(ladder[next], ladder[idx]); // higher f-number = narrower aperture
+}
+
+TEST(ApertureStepping, StepDownWidensAperture) {
+    auto ladder = full_aperture();
+    int idx  = aperture_index(5.6f, ladder);
+    int prev = std::max(0, idx - 1);
+    EXPECT_LT(ladder[prev], ladder[idx]); // lower f-number = wider aperture
+}
+
+TEST(ApertureStepping, EachStepIsOneThirdStop) {
+    // Every adjacent pair in the master table should be within half a stop of
+    // exactly 1/3 stop (2^(1/6)). The display-rounded values introduce small
+    // errors (e.g. 1.2→1.4 rounds to 1.167× instead of 1.1225×) but must stay
+    // below 2^(1/4) ≈ 1.189 (halfway between a third-stop and a half-stop).
+    const float kThirdStop    = std::pow(2.0f, 1.0f / 6.0f); // 1.1225
+    const float kHalfStopMax  = std::pow(2.0f, 1.0f / 4.0f); // 1.189 — tolerance ceiling
+    for (int i = 1; i < (int)kApertureMaster.size(); ++i) {
+        float ratio = kApertureMaster[i] / kApertureMaster[i - 1];
+        EXPECT_GT(ratio, 1.0f)             << "step " << i << " is not increasing";
+        EXPECT_LT(ratio, kHalfStopMax)    << "step " << i << " exceeds half-stop gap";
+        (void)kThirdStop; // documented target; exact check skipped due to display rounding
+    }
 }
