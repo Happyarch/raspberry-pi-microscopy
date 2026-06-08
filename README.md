@@ -9,7 +9,7 @@ Pre-built SD card images and binaries are available on the [Releases](../../rele
 ## Features
 
 - **Live viewfinder** — YUV420 camera feed displayed full-screen via SDL2 (kmsdrm backend, no X11 or Wayland)
-- **Sony Alpha OSD** — translucent bottom bar showing exposure mode, shutter speed, ISO, focus mode, and still count; all elements scale proportionally to display resolution
+- **Sony Alpha Styled OSD** — translucent bottom bar showing exposure mode, shutter speed, ISO, focus mode, and still count; all elements scale proportionally to display resolution
 - **Exposure modes** — Program (P), Aperture priority (A), Shutter priority (S), Manual (M)
 - **ISO control** — AUTO or manual steps (100–6400); adjustable in any mode
 - **Automatic display resolution** — queries EDID at startup and selects the best supported mode up to 1080p (4:3 / 16:9 / 16:10, minimum 480p)
