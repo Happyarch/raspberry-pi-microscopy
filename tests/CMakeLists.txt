@@ -63,10 +63,11 @@ target_link_libraries(test_socket_server PRIVATE GTest::gtest_main)
 add_test(NAME socket_server COMMAND test_socket_server)
 
 # ---------------------------------------------------------------------------
-# test_mjpeg_server — exercises the HTTP-MJPEG server (requires libjpeg-turbo)
+# test_mjpeg_server — exercises the HTTP-MJPEG server (libjpeg-turbo + OpenSSL)
 # ---------------------------------------------------------------------------
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBJPEG REQUIRED libturbojpeg)
+find_package(OpenSSL REQUIRED)
 
 add_executable(test_mjpeg_server
     test_mjpeg_server.cpp
@@ -75,6 +76,12 @@ add_executable(test_mjpeg_server
 target_include_directories(test_mjpeg_server PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${LIBJPEG_INCLUDE_DIRS}
+    ${OPENSSL_INCLUDE_DIR}
 )
-target_link_libraries(test_mjpeg_server PRIVATE GTest::gtest_main ${LIBJPEG_LIBRARIES})
+target_link_libraries(test_mjpeg_server PRIVATE
+    GTest::gtest_main
+    ${LIBJPEG_LIBRARIES}
+    OpenSSL::SSL
+    OpenSSL::Crypto
+)
 add_test(NAME mjpeg_server COMMAND test_mjpeg_server)

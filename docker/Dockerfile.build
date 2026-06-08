@@ -17,7 +17,7 @@ RUN printf 'Package: libcamera* python3-libcamera\nPin: origin archive.raspberry
     > /etc/apt/preferences.d/libcamera-pi
 
 # Install build tools and all ARM64 runtime + dev libraries.
-RUN apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     pkg-config \
@@ -37,8 +37,12 @@ RUN apt-get install -y --no-install-recommends \
     librsvg2-bin \
     # Font
     fonts-roboto \
-    # MJPEG encoding (turbojpeg API)
-    libjpeg-turbo-dev \
+    # MJPEG encoding (turbojpeg API).
+    # Debian splits this into two packages: libjpeg62-turbo-dev (libjpeg compat)
+    # and libturbojpeg0-dev (tj* API + libturbojpeg.pc). We need the latter.
+    libturbojpeg0-dev \
+    # TLS for optional HTTPS stream
+    libssl-dev \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src

@@ -6,7 +6,13 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+#include <openssl/x509.h>
+#include <openssl/evp.h>
+
 #include <array>
+#include <cstdio>
 #include <cstring>
 #include <functional>
 #include <string>
@@ -378,6 +384,121 @@ TEST(MjpegServer, Stream_ContainsJpegFrame) {
         << "expected image/jpeg in frame header";
     EXPECT_NE(resp.find("Content-Length:"), std::string::npos)
         << "expected Content-Length in frame header";
+}
+
+// ---------------------------------------------------------------------------
+// HTTPS — TLS wrapping via OpenSSL
+// ---------------------------------------------------------------------------
+
+// Generate a temporary P-256 self-signed cert+key using the openssl CLI.
+// Returns true and fills cert_path / key_path with /tmp paths on success.
+static bool gen_test_cert(std::string& cert_path, std::string& key_path) {
+    cert_path = "/tmp/test_mjpeg_cert.pem";
+    key_path  = "/tmp/test_mjpeg_key.pem";
+    std::string cmd =
+        "openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256"
+        " -keyout " + key_path +
+        " -out " + cert_path +
+        " -days 1 -nodes -subj '/CN=test' 2>/dev/null";
+    return std::system(cmd.c_str()) == 0;
+}
+
+// TLS GET helper: wraps tcp_connect in an SSL client session.
+static std::string https_get(int port, const std::string& path) {
+    int fd = tcp_connect(port);
+    if (fd < 0) return "";
+
+    SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
+    SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, nullptr); // accept self-signed
+    SSL* ssl = SSL_new(ctx);
+    SSL_set_fd(ssl, fd);
+    if (SSL_connect(ssl) <= 0) {
+        SSL_free(ssl); SSL_CTX_free(ctx); ::close(fd); return "";
+    }
+
+    std::string req = "GET " + path + " HTTP/1.0\r\n\r\n";
+    SSL_write(ssl, req.c_str(), static_cast<int>(req.size()));
+
+    std::string resp;
+    char buf[4096];
+    int  n;
+    while ((n = SSL_read(ssl, buf, sizeof(buf))) > 0)
+        resp.append(buf, static_cast<size_t>(n));
+
+    SSL_shutdown(ssl);
+    SSL_free(ssl);
+    SSL_CTX_free(ctx);
+    ::close(fd);
+    return resp;
+}
+
+TEST(MjpegServer, HTTPS_FallsBackToHttpWhenNoCert) {
+    int port = alloc_port();
+    ASSERT_GT(port, 0);
+    // https=true but empty cert/key — server must start anyway (as plain HTTP)
+    MjpegServer srv(port, 75, 1.0f, 30, true, "", "");
+    EXPECT_TRUE(srv.ok()) << "server should still bind even when TLS setup fails";
+}
+
+TEST(MjpegServer, HTTPS_FallsBackToHttpOnMissingCertFile) {
+    int port = alloc_port();
+    ASSERT_GT(port, 0);
+    MjpegServer srv(port, 75, 1.0f, 30, true, "/nonexistent.crt", "/nonexistent.key");
+    EXPECT_TRUE(srv.ok());
+
+    int probe = tcp_connect_retry(port);
+    ASSERT_GE(probe, 0) << "server not listening after fallback to HTTP";
+    ::close(probe);
+
+    // Must serve plain HTTP (no TLS)
+    std::string resp = http_get(port, "/");
+    EXPECT_NE(resp.find("200 OK"), std::string::npos);
+}
+
+TEST(MjpegServer, HTTPS_ServesPageOverTls) {
+    std::string cert, key;
+    if (!gen_test_cert(cert, key)) {
+        GTEST_SKIP() << "openssl CLI not available — skipping TLS test";
+    }
+
+    int port = alloc_port();
+    ASSERT_GT(port, 0);
+    MjpegServer srv(port, 75, 1.0f, 30, true, cert, key);
+    ASSERT_TRUE(srv.ok());
+
+    int probe = tcp_connect_retry(port);
+    ASSERT_GE(probe, 0) << "HTTPS server not listening";
+    ::close(probe);
+
+    std::string resp = https_get(port, "/");
+    EXPECT_NE(resp.find("200 OK"), std::string::npos) << "expected HTTP 200 over TLS";
+    EXPECT_NE(resp.find("text/html"), std::string::npos);
+    EXPECT_NE(resp.find("<!DOCTYPE html"), std::string::npos);
+
+    std::remove(cert.c_str());
+    std::remove(key.c_str());
+}
+
+TEST(MjpegServer, HTTPS_StatusEndpointOverTls) {
+    std::string cert, key;
+    if (!gen_test_cert(cert, key)) GTEST_SKIP() << "openssl CLI not available";
+
+    int port = alloc_port();
+    ASSERT_GT(port, 0);
+    MjpegServer srv(port, 75, 1.0f, 30, true, cert, key);
+    ASSERT_TRUE(srv.ok());
+    srv.set_status(R"({"mode":"P","https":true})");
+
+    int probe = tcp_connect_retry(port);
+    ASSERT_GE(probe, 0);
+    ::close(probe);
+
+    std::string resp = https_get(port, "/api/status");
+    EXPECT_NE(resp.find("application/json"), std::string::npos);
+    EXPECT_NE(resp.find("https"), std::string::npos);
+
+    std::remove(cert.c_str());
+    std::remove(key.c_str());
 }
 
 // ---------------------------------------------------------------------------

@@ -133,6 +133,9 @@ Config load_config(const std::string& path) {
             else if (key == "stream_quality") c.stream_quality = parse_int  (key, val, c.stream_quality);
             else if (key == "stream_scale")   c.stream_scale   = parse_float(key, val, c.stream_scale);
             else if (key == "stream_fps")     c.stream_fps     = parse_int  (key, val, c.stream_fps);
+            else if (key == "stream_https")   c.stream_https   = parse_bool (key, val, c.stream_https);
+            else if (key == "stream_cert")    c.stream_cert    = val;
+            else if (key == "stream_key")     c.stream_key     = val;
         } else if (section == "keys") {
             using KF = std::string KeyMap::*;
             static const std::unordered_map<std::string, KF> key_fields = {
@@ -296,6 +299,15 @@ stream_scale = 0.5
 # Actual rate is also limited by camera fps and encoder speed.
 # Set to 0 for unlimited (encode every viewfinder frame).
 stream_fps = 15
+
+# Enable HTTPS (TLS). Default is off — plain HTTP is fine for local LAN use.
+# When enabled, stream_cert and stream_key must point to valid PEM files.
+# Generate a self-signed cert with:
+#   openssl req -x509 -newkey rsa:2048 -keyout /etc/microscopi/server.key \
+#     -out /etc/microscopi/server.crt -days 3650 -nodes -subj '/CN=microscopi'
+stream_https = false
+stream_cert  =
+stream_key   =
 )";
     std::cerr << "[config] wrote default config to " << path << "\n";
 }

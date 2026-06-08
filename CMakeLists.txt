@@ -30,6 +30,7 @@ pkg_check_modules(AVFORMAT    REQUIRED libavformat)
 pkg_check_modules(AVCODEC     REQUIRED libavcodec)
 pkg_check_modules(AVUTIL      REQUIRED libavutil)
 pkg_check_modules(LIBJPEG     REQUIRED libturbojpeg)
+find_package(OpenSSL REQUIRED)
 
 # ---------------------------------------------------------------------------
 # Sources
@@ -59,6 +60,7 @@ target_include_directories(microscopi PRIVATE
     ${AVCODEC_INCLUDE_DIRS}
     ${AVUTIL_INCLUDE_DIRS}
     ${LIBJPEG_INCLUDE_DIRS}
+    ${OPENSSL_INCLUDE_DIR}
 )
 
 target_link_libraries(microscopi PRIVATE
@@ -70,6 +72,8 @@ target_link_libraries(microscopi PRIVATE
     ${AVCODEC_LIBRARIES}
     ${AVUTIL_LIBRARIES}
     ${LIBJPEG_LIBRARIES}
+    OpenSSL::SSL
+    OpenSSL::Crypto
 )
 
 target_compile_options(microscopi PRIVATE

@@ -133,7 +133,8 @@ int main() {
 
     SocketServer sock(cfg.socket_path);
 
-    MjpegServer mjpeg(cfg.stream_port, cfg.stream_quality, cfg.stream_scale, cfg.stream_fps);
+    MjpegServer mjpeg(cfg.stream_port, cfg.stream_quality, cfg.stream_scale, cfg.stream_fps,
+                      cfg.stream_https, cfg.stream_cert, cfg.stream_key);
 
     // ---- Camera mode list (built once after camera starts) ----
     std::vector<CameraMode>  cam_modes     = camera.get_modes();

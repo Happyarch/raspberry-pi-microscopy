@@ -1,0 +1,1 @@
+/usr/bin/c++ -g -Wl,--dependency-file=CMakeFiles/test_keybinding.dir/link.d CMakeFiles/test_keybinding.dir/test_keybinding.cpp.o CMakeFiles/test_keybinding.dir/__/src/ui/keybinding.cpp.o -o test_keybinding  ../lib/libgtest_main.a -lSDL2 ../lib/libgtest.a

@@ -13,6 +13,9 @@
 #include <iostream>
 #include <sstream>
 
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+
 #include <turbojpeg.h>
 
 // ---------------------------------------------------------------------------
@@ -202,6 +205,37 @@ pollStatus();
 </html>)HTML";
 
 // ---------------------------------------------------------------------------
+// Per-connection wrapper — unified read/write over plain TCP or TLS
+// ---------------------------------------------------------------------------
+
+struct Conn {
+    int  fd  = -1;
+    SSL* ssl = nullptr;
+
+    ssize_t read1(char& c) const {
+        if (ssl) return SSL_read(ssl, &c, 1);
+        return ::recv(fd, &c, 1, 0);
+    }
+
+    bool write(const void* buf, size_t n) const {
+        const char* p = static_cast<const char*>(buf);
+        while (n > 0) {
+            int w = ssl ? SSL_write(ssl, p, static_cast<int>(n))
+                        : static_cast<int>(::send(fd, p, n, MSG_NOSIGNAL));
+            if (w <= 0) return false;
+            p += w;
+            n -= static_cast<size_t>(w);
+        }
+        return true;
+    }
+
+    void close() {
+        if (ssl) { SSL_shutdown(ssl); SSL_free(ssl); ssl = nullptr; }
+        if (fd >= 0) { ::close(fd); fd = -1; }
+    }
+};
+
+// ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
@@ -222,24 +256,14 @@ static std::string url_decode(const std::string& in) {
     return out;
 }
 
-static bool send_all(int fd, const void* buf, size_t n) {
-    const char* p = static_cast<const char*>(buf);
-    while (n > 0) {
-        ssize_t sent = ::send(fd, p, n, MSG_NOSIGNAL);
-        if (sent <= 0) return false;
-        p += sent; n -= sent;
-    }
-    return true;
-}
-
-static bool read_line(int fd, std::string& out) {
+static bool read_line(const Conn& c, std::string& out) {
     out.clear();
-    char c;
+    char ch;
     while (true) {
-        ssize_t n = ::recv(fd, &c, 1, 0);
+        ssize_t n = c.read1(ch);
         if (n == 1) {
-            if (c == '\n') return true;
-            if (c != '\r') out += c;
+            if (ch == '\n') return true;
+            if (ch != '\r') out += ch;
             if (out.size() > 8192) return false;
         } else {
             return false;
@@ -247,7 +271,7 @@ static bool read_line(int fd, std::string& out) {
     }
 }
 
-static void send_http(int fd, int code, const char* ct,
+static void send_http(const Conn& c, int code, const char* ct,
                       const char* body, size_t body_len) {
     const char* reason = (code == 200) ? "OK" : "Not Found";
     std::string hdr;
@@ -256,8 +280,8 @@ static void send_http(int fd, int code, const char* ct,
     hdr += "Content-Type: "; hdr += ct; hdr += "\r\n";
     hdr += "Content-Length: "; hdr += std::to_string(body_len); hdr += "\r\n";
     hdr += "Access-Control-Allow-Origin: *\r\nCache-Control: no-store\r\n\r\n";
-    send_all(fd, hdr.c_str(), hdr.size());
-    if (body_len > 0) send_all(fd, body, body_len);
+    c.write(hdr.c_str(), hdr.size());
+    if (body_len > 0) c.write(body, body_len);
 }
 
 static void downsample_yuv420(
@@ -291,11 +315,42 @@ static void downsample_yuv420(
 // MjpegServer
 // ---------------------------------------------------------------------------
 
-MjpegServer::MjpegServer(int port, int jpeg_quality, float scale, int max_fps)
-    : port_(port), quality_(jpeg_quality), max_fps_(max_fps), scale_(scale)
+MjpegServer::MjpegServer(int port, int jpeg_quality, float scale, int max_fps,
+                          bool https, const std::string& cert_file,
+                          const std::string& key_file)
+    : port_(port), quality_(jpeg_quality), max_fps_(max_fps), scale_(scale), https_(https)
 {
     // Ignore SIGPIPE — broken client connections should return EPIPE, not kill the process
     ::signal(SIGPIPE, SIG_IGN);
+
+    if (https_) {
+        SSL_CTX* ctx = SSL_CTX_new(TLS_server_method());
+        if (!ctx) {
+            std::cerr << "[mjpeg] SSL_CTX_new failed — falling back to HTTP\n";
+            https_ = false;
+        } else if (cert_file.empty() || key_file.empty()) {
+            std::cerr << "[mjpeg] stream_https = true but stream_cert/stream_key not set"
+                         " — falling back to HTTP\n";
+            SSL_CTX_free(ctx);
+            https_ = false;
+        } else if (SSL_CTX_use_certificate_file(ctx, cert_file.c_str(), SSL_FILETYPE_PEM) != 1) {
+            std::cerr << "[mjpeg] failed to load TLS cert: " << cert_file
+                      << " — falling back to HTTP\n";
+            SSL_CTX_free(ctx);
+            https_ = false;
+        } else if (SSL_CTX_use_PrivateKey_file(ctx, key_file.c_str(), SSL_FILETYPE_PEM) != 1) {
+            std::cerr << "[mjpeg] failed to load TLS key: " << key_file
+                      << " — falling back to HTTP\n";
+            SSL_CTX_free(ctx);
+            https_ = false;
+        } else if (!SSL_CTX_check_private_key(ctx)) {
+            std::cerr << "[mjpeg] TLS cert/key mismatch — falling back to HTTP\n";
+            SSL_CTX_free(ctx);
+            https_ = false;
+        } else {
+            ssl_ctx_ = ctx;
+        }
+    }
 
     listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd_ < 0) {
@@ -328,7 +383,8 @@ MjpegServer::MjpegServer(int port, int jpeg_quality, float scale, int max_fps)
     encode_thread_ = std::thread([this]{ encode_loop(); });
     listen_thread_ = std::thread([this]{ listen_loop(); });
 
-    std::cerr << "[mjpeg] listening on port " << port_ << "\n";
+    std::cerr << "[mjpeg] listening on port " << port_
+              << " (" << (https_ ? "HTTPS" : "HTTP") << ")\n";
 }
 
 MjpegServer::~MjpegServer() {
@@ -348,11 +404,18 @@ MjpegServer::~MjpegServer() {
         listen_fd_ = -1;
     }
 
-    // Give any running stream threads up to 2 s to notice stopping_ and finish
+    // Give any running stream threads up to 2 s to notice stopping_ and finish.
+    // Stream threads decrement stream_count_ only after SSL_free+close, so it's
+    // safe to free ssl_ctx_ once stream_count_ reaches zero.
     using Clock = std::chrono::steady_clock;
     auto deadline = Clock::now() + std::chrono::seconds(2);
     while (stream_count_.load() > 0 && Clock::now() < deadline)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+    if (ssl_ctx_) {
+        SSL_CTX_free(static_cast<SSL_CTX*>(ssl_ctx_));
+        ssl_ctx_ = nullptr;
+    }
 }
 
 void MjpegServer::push_frame(const uint8_t* y, const uint8_t* u, const uint8_t* v,
@@ -501,10 +564,21 @@ void MjpegServer::encode_loop() {
 // ---------------------------------------------------------------------------
 
 void MjpegServer::listen_loop() {
+    SSL_CTX* ctx = static_cast<SSL_CTX*>(ssl_ctx_);
     while (!stopping_) {
         int fd = ::accept(listen_fd_, nullptr, nullptr);
         if (fd >= 0) {
-            auto t = std::thread([this, fd]{ client_loop(fd); });
+            SSL* ssl = nullptr;
+            if (https_ && ctx) {
+                ssl = SSL_new(ctx);
+                SSL_set_fd(ssl, fd);
+                if (SSL_accept(ssl) <= 0) {
+                    SSL_free(ssl);
+                    ::close(fd);
+                    continue;
+                }
+            }
+            auto t = std::thread([this, fd, ssl]{ client_loop(fd, ssl); });
             t.detach();
         } else if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -514,17 +588,19 @@ void MjpegServer::listen_loop() {
     }
 }
 
-void MjpegServer::client_loop(int fd) {
-    // 5-second timeout for reading the HTTP request
+void MjpegServer::client_loop(int fd, void* ssl_vp) {
+    Conn c{fd, static_cast<SSL*>(ssl_vp)};
+
+    // 5-second receive timeout for reading the HTTP request
     struct timeval rtv{5, 0};
-    ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
-    // 2-second timeout for sending (protects against slow clients blocking stream threads)
+    ::setsockopt(c.fd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
+    // 2-second send timeout (protects against slow clients blocking stream threads)
     struct timeval stv{2, 0};
-    ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &stv, sizeof(stv));
+    ::setsockopt(c.fd, SOL_SOCKET, SO_SNDTIMEO, &stv, sizeof(stv));
 
     // Parse request line
     std::string request_line;
-    if (!read_line(fd, request_line)) { ::close(fd); return; }
+    if (!read_line(c, request_line)) { c.close(); return; }
 
     std::string method, raw_path;
     {
@@ -534,7 +610,7 @@ void MjpegServer::client_loop(int fd) {
 
     // Drain remaining headers
     std::string hdr;
-    while (read_line(fd, hdr) && !hdr.empty()) {}
+    while (read_line(c, hdr) && !hdr.empty()) {}
 
     // URL-decode and strip query string
     std::string path = url_decode(raw_path);
@@ -543,14 +619,50 @@ void MjpegServer::client_loop(int fd) {
 
     // Route
     if (method == "GET" && path == "/") {
-        send_http(fd, 200, "text/html; charset=utf-8",
+        send_http(c, 200, "text/html; charset=utf-8",
                   kWebUiHtml, sizeof(kWebUiHtml) - 1);
 
     } else if (method == "GET" && path == "/stream") {
-        // Remove recv timeout for long-lived stream connection
+        // Remove recv timeout — stream connection is long-lived
         struct timeval zero{0, 0};
-        ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &zero, sizeof(zero));
-        stream_loop(fd);
+        ::setsockopt(c.fd, SOL_SOCKET, SO_RCVTIMEO, &zero, sizeof(zero));
+
+        // MJPEG multipart stream — inline loop.
+        // stream_count_ is decremented only after c.close() so the destructor
+        // knows ssl_ctx_ is still referenced until the SSL* is freed.
+        ++stream_count_;
+
+        static const char kMjpegHeader[] =
+            "HTTP/1.0 200 OK\r\n"
+            "Content-Type: multipart/x-mixed-replace;boundary=mjpegframe\r\n"
+            "Cache-Control: no-store\r\n"
+            "Access-Control-Allow-Origin: *\r\n"
+            "\r\n";
+
+        if (c.write(kMjpegHeader, sizeof(kMjpegHeader) - 1)) {
+            uint64_t last_seq = 0;
+            while (!stopping_) {
+                std::shared_ptr<const std::vector<uint8_t>> jpeg;
+                {
+                    std::unique_lock<std::mutex> lk(jpeg_mtx_);
+                    jpeg_cv_.wait(lk, [&]{ return jpeg_seq_ != last_seq || stopping_; });
+                    if (stopping_) break;
+                    last_seq = jpeg_seq_;
+                    jpeg = jpeg_ptr_; // O(1) ref-count copy
+                }
+                if (!jpeg || jpeg->empty()) continue;
+                char boundary[128];
+                int blen = std::snprintf(boundary, sizeof(boundary),
+                    "--mjpegframe\r\nContent-Type: image/jpeg\r\nContent-Length: %zu\r\n\r\n",
+                    jpeg->size());
+                if (!c.write(boundary, static_cast<size_t>(blen))) break;
+                if (!c.write(jpeg->data(), jpeg->size())) break;
+            }
+        }
+
+        c.close();        // SSL_shutdown + SSL_free + ::close before decrement
+        --stream_count_;  // destructor may free ssl_ctx_ once this reaches 0
+        return;
 
     } else if (method == "GET" && path == "/api/status") {
         std::string json;
@@ -558,13 +670,13 @@ void MjpegServer::client_loop(int fd) {
             std::lock_guard<std::mutex> lk(status_mtx_);
             json = status_json_;
         }
-        send_http(fd, 200, "application/json", json.c_str(), json.size());
+        send_http(c, 200, "application/json", json.c_str(), json.size());
 
     } else if (method == "POST" && path.rfind("/api/", 0) == 0) {
         std::string cmd_str = path.substr(5); // strip "/api/"
         if (cmd_str.empty()) {
             const char kErr[] = "ERR empty command";
-            send_http(fd, 200, "text/plain", kErr, sizeof(kErr) - 1);
+            send_http(c, 200, "text/plain", kErr, sizeof(kErr) - 1);
         } else {
             auto prom = std::make_shared<std::promise<std::string>>();
             auto fut  = prom->get_future();
@@ -578,54 +690,13 @@ void MjpegServer::client_loop(int fd) {
             } else {
                 result = "ERR timeout";
             }
-            send_http(fd, 200, "text/plain", result.c_str(), result.size());
+            send_http(c, 200, "text/plain", result.c_str(), result.size());
         }
 
     } else {
         const char kNotFound[] = "Not Found";
-        send_http(fd, 404, "text/plain", kNotFound, sizeof(kNotFound) - 1);
+        send_http(c, 404, "text/plain", kNotFound, sizeof(kNotFound) - 1);
     }
 
-    ::close(fd);
-}
-
-void MjpegServer::stream_loop(int fd) {
-    ++stream_count_;
-
-    static const char kMjpegHeader[] =
-        "HTTP/1.0 200 OK\r\n"
-        "Content-Type: multipart/x-mixed-replace;boundary=mjpegframe\r\n"
-        "Cache-Control: no-store\r\n"
-        "Access-Control-Allow-Origin: *\r\n"
-        "\r\n";
-
-    if (!send_all(fd, kMjpegHeader, sizeof(kMjpegHeader) - 1)) {
-        --stream_count_;
-        return;
-    }
-
-    uint64_t last_seq = 0;
-
-    while (!stopping_) {
-        std::shared_ptr<const std::vector<uint8_t>> jpeg;
-        {
-            std::unique_lock<std::mutex> lk(jpeg_mtx_);
-            jpeg_cv_.wait(lk, [&]{ return jpeg_seq_ != last_seq || stopping_; });
-            if (stopping_) break;
-            last_seq = jpeg_seq_;
-            jpeg = jpeg_ptr_; // O(1) ref-count copy
-        }
-
-        if (!jpeg || jpeg->empty()) continue;
-
-        // Multipart boundary
-        char boundary[128];
-        int blen = std::snprintf(boundary, sizeof(boundary),
-            "--mjpegframe\r\nContent-Type: image/jpeg\r\nContent-Length: %zu\r\n\r\n",
-            jpeg->size());
-        if (!send_all(fd, boundary, static_cast<size_t>(blen))) break;
-        if (!send_all(fd, jpeg->data(), jpeg->size())) break;
-    }
-
-    --stream_count_;
+    c.close();
 }

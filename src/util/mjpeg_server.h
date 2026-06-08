@@ -13,7 +13,11 @@
 
 class MjpegServer {
 public:
-    MjpegServer(int port, int jpeg_quality, float scale, int max_fps);
+    // https=true requires cert_file and key_file (PEM). Falls back to HTTP on error.
+    MjpegServer(int port, int jpeg_quality, float scale, int max_fps,
+                bool https = false,
+                const std::string& cert_file = {},
+                const std::string& key_file  = {});
     ~MjpegServer();
 
     MjpegServer(const MjpegServer&) = delete;
@@ -46,11 +50,12 @@ private:
 
     void encode_loop();
     void listen_loop();
-    void client_loop(int fd);
-    void stream_loop(int fd);
+    void client_loop(int fd, void* ssl); // ssl is SSL* cast to void* (avoids OpenSSL in header)
 
     int port_, quality_, max_fps_;
     float scale_;
+    bool  https_{false};
+    void* ssl_ctx_{nullptr}; // SSL_CTX*; non-null only when https_ is true and init succeeded
     int listen_fd_{-1};
 
     // YUV ping-pong (main writes, encode reads — no lock needed for the data copy)
