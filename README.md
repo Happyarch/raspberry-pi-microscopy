@@ -15,6 +15,8 @@ Pre-built SD card images and binaries are available on the [Releases](../../rele
 - **Automatic display resolution** — queries EDID at startup and selects the best supported mode up to 1080p (4:3 / 16:9 / 16:10, minimum 480p)
 - **Hardware H.264 encoding** — VideoCore IV GPU encoder via `h264_v4l2m2m`; output in crash-recoverable MKV format
 - **Configurable video pipeline** — choose between the built-in libavformat muxer or a fully custom `ffmpeg` subprocess command
+- **Timelapse mode** — 9 configurable interval schedule functions (linear, exponential, logarithmic, power-law, Michaelis-Menten, logistic, stretched-exponential, hyperbolic); per-session floor/ceil clamping; named session directories; RTC-optional naming
+- **Network streaming** — HTTP-MJPEG stream + browser-based control UI; REST API; Unix socket for scripted control; optional HTTPS
 - **Rebindable key map** — all key bindings configurable in `microscopi.conf`
 - **Runtime SVG icon rendering** — icons rendered from SVG to PNG at the correct size for the display via `rsvg-convert`, cached per resolution in `~/.cache/microscopi/`
 - **Minimal OS** — pi-gen Stage 2 (Raspberry Pi OS Lite) + custom Stage 3; nothing else runs on boot
@@ -25,7 +27,7 @@ All bindings are rebindable in the `[keys]` section of `microscopi.conf`. Defaul
 
 | Key | Action |
 |---|---|
-| `T` / `Shift+T` | Cycle exposure mode forward / backward (P→A→S→M) |
+| `C` / `Shift+C` | Cycle exposure mode forward / backward (P→A→S→M) |
 | `P` / `A` / `S` / `M` | Jump directly to that exposure mode |
 | `↑` / `↓` | Focus step (switches to manual focus) |
 | `Shift+↑` / `Shift+↓` | Shutter speed +/− one stop (S and M modes) |
@@ -34,11 +36,16 @@ All bindings are rebindable in the `[keys]` section of `microscopi.conf`. Defaul
 | `Shift+A` | Toggle autofocus on/off |
 | `Space` | Capture still (saved to `~/stills/`) |
 | `Shift+R` (hold 500 ms) | Start / stop video recording (saved to `~/videos/`) |
-| `C` | Toggle center guide overlay (circle + crosshair) |
-| `H` (hold 3 s) | Show key binding help overlay |
+| `T` (hold 500 ms) | Start / stop timelapse (saved to `~/timelapses/`) |
+| `X` | Toggle center guide overlay (circle + crosshair) |
+| `H` | Show key binding help overlay (auto-dismisses after 4 s) |
 | `Esc` or `Q` (hold 5 s) | Quit (warning shown after 2.5 s) |
 
 While recording: a red dot flashes top-left with a `HH:MM:SS'AS` timestamp (arc-seconds = 1/60 s, divides evenly at 30 and 60 fps with integer arithmetic only).
+
+While a timelapse is running: an amber arc + frame counter is shown top-left. The arc sweeps toward the next capture time.
+
+See [`docs/controls.md`](docs/controls.md) for a detailed reference covering all controls, timelapse functions, and remote commands.
 
 ## Building
 
@@ -105,8 +112,8 @@ show_crosshair = false
 [keys]
 # All values: lowercase letter/digit, or: up down left right space escape return
 # Prefix with "shift+" for shift-modified bindings (e.g. "shift+t")
-mode_cycle_fwd  = t
-mode_cycle_back = shift+t
+mode_cycle_fwd  = c
+mode_cycle_back = shift+c
 mode_p = p
 mode_a = a
 mode_s = s
@@ -122,7 +129,8 @@ aperture_down = left
 toggle_af = shift+a
 still = space
 record = shift+r
-crosshair = c
+timelapse = t
+crosshair = x
 quit = escape
 help = h
 ```
@@ -143,6 +151,9 @@ src/
     config.h / cpp        INI parser; KeyMap loaded into InputHandler at startup
   util/
     resolution.h / cpp    EDID display mode selection via SDL2
+    timelapse.h           Interval schedule functions (header-only, no deps)
+    mjpeg_server.h / cpp  HTTP-MJPEG stream server + embedded web UI
+    socket_server.h / cpp Unix domain socket command server
 
 assets/
   icons/                  Lucide SVG icons (ISC license)

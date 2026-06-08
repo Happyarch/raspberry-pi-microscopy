@@ -102,8 +102,11 @@ path. The response is plain text.
 | `af on\|off` | `POST /api/af%20on` | Toggle autofocus. |
 | `ae on\|off` | `POST /api/ae%20on` | Toggle autoexposure. |
 | `quit` | `POST /api/quit` | Graceful shutdown. |
+| `timelapse start [args]` | `POST /api/timelapse%20start%20base%3D5000` | Start timelapse. See [`docs/controls.md`](controls.md) for all arguments. |
+| `timelapse stop` | `POST /api/timelapse%20stop` | Stop timelapse; renames session directory. |
+| `timelapse status` | `POST /api/timelapse%20status` | Returns JSON with active state, count, function, and next-in countdown. |
 
-`GET /api/status` returns a JSON object with current camera state:
+`GET /api/status` returns a JSON object with current camera and timelapse state:
 
 ```json
 {
@@ -114,11 +117,16 @@ path. The response is plain text.
   "lens_pos": 0.42,
   "ae": true,
   "af": true,
-  "recording": false
+  "recording": false,
+  "still_count": 3,
+  "dual_stream": false,
+  "tl_active": false,
+  "tl_count": 0,
+  "tl_fn": "linear"
 }
 ```
 
-`iso = 0` means auto. `lens_pos < 0` means AF is active and position is unknown.
+`iso = 0` means auto. `lens_pos < 0` means AF is active and position is unknown. `tl_active` is true while a timelapse session is running.
 
 ## Streaming with external players
 

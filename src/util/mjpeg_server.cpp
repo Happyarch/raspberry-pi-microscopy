@@ -43,6 +43,7 @@ body{background:#111;color:#ddd;font-family:system-ui,sans-serif;font-size:14px;
 .oitem .val{color:#fff;font-weight:500}
 .oitem .val.dim{color:#666}
 #rec{margin-left:auto;color:#f44;font-weight:700;display:none}
+#tl-ind{color:#e8a000;font-weight:700;display:none}
 #msg{padding:5px 10px;min-height:22px;font-size:12px;color:#888}
 #ctrl{padding:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
 .grp{background:#1a1a1a;border-radius:6px;padding:9px}
@@ -55,6 +56,10 @@ button:hover{background:#333}
 button:active{background:#444}
 button.on{background:#1a5c30;border-color:#2a8a50;color:#7fc}
 button.rec-on{background:#5c1a1a;border-color:#8a3030;color:#faa}
+button.tl-on{background:#3a2e00;border-color:#7a5e00;color:#fca}
+.numrow{display:flex;align-items:center;gap:4px;margin-top:4px}
+.numrow label{font-size:11px;color:#666;white-space:nowrap}
+.numrow input{flex:1;background:#2a2a2a;color:#ccc;border:1px solid #333;border-radius:4px;padding:4px 6px;font-size:13px;width:0}
 .row{display:flex;gap:5px}
 .row button{flex:1}
 input[type=range]{width:100%;margin:5px 0;accent-color:#4af;cursor:pointer}
@@ -74,6 +79,7 @@ select{
     <div class="oitem"><div class="lbl">aperture</div><div class="val" id="o-ap">f/--</div></div>
     <div class="oitem"><div class="lbl">focus</div><div class="val" id="o-foc">AF</div></div>
     <div id="rec">&#9679; REC <span id="rec-t">00:00</span></div>
+    <div id="tl-ind">&#9654; TL <span id="tl-n">0</span></div>
   </div>
 </div>
 <div id="msg"></div>
@@ -123,12 +129,19 @@ select{
       <option value="500">1/2000</option><option value="250">1/4000</option>
     </select>
   </div>
+  <div class="grp">
+    <h3>Timelapse</h3>
+    <button id="btn-tl" onclick="toggleTl()">&#9654; Start</button>
+    <div id="tl-status" style="font-size:11px;color:#888;margin-top:5px;min-height:14px"></div>
+    <div class="numrow"><label>Interval (s)</label><input type="number" id="tl-iv" min="2" max="3600" value="5" step="1"></div>
+    <div class="numrow"><label>Max frames</label><input type="number" id="tl-max" min="0" max="99999" value="0" title="0 = unlimited"></div>
+  </div>
 </div>
 <script>
 'use strict';
 const $=id=>document.getElementById(id);
 const msg=t=>{$('msg').textContent=t;};
-let ae=true,af=true,recording=false,recStart=0,recTick=null;
+let ae=true,af=true,recording=false,recStart=0,recTick=null,tl_active=false;
 async function cmd(c){
   try{
     const r=await fetch('/api/'+encodeURIComponent(c),{method:'POST'});
@@ -173,6 +186,24 @@ function stopRec(){
   $('btn-rec').innerHTML='&#9654; Record';$('btn-rec').classList.remove('rec-on');
   $('rec').style.display='none';
 }
+function toggleTl(){
+  if(!tl_active){
+    const iv=Math.max(2,parseInt($('tl-iv').value)||5);
+    const max=parseInt($('tl-max').value)||0;
+    cmd('timelapse start base='+(iv*1000)+' max='+max);
+  }else{cmd('timelapse stop');}
+}
+function startTlUi(count){
+  tl_active=true;
+  $('btn-tl').innerHTML='&#9646;&#9646; Stop';$('btn-tl').classList.add('tl-on');
+  $('tl-ind').style.display='block';
+  $('tl-n').textContent=count||0;$('tl-status').textContent=(count||0)+' frames';
+}
+function stopTlUi(){
+  tl_active=false;
+  $('btn-tl').innerHTML='&#9654; Start';$('btn-tl').classList.remove('tl-on');
+  $('tl-ind').style.display='none';$('tl-status').textContent='';
+}
 function fmtShutter(us){
   if(!us||us<=0)return'---';
   const s=us/1e6;return s<0.5?'1/'+Math.round(1/s):s.toFixed(1)+'"';
@@ -191,6 +222,9 @@ async function pollStatus(){
       $('btn-rec').innerHTML='&#9646;&#9646; Stop';$('btn-rec').classList.add('rec-on');
       $('rec').style.display='block';recTick=setInterval(tickRec,1000);
     }else if(!st.recording&&recording){stopRec();}
+    if(st.tl_active&&!tl_active)startTlUi(st.tl_count);
+    else if(!st.tl_active&&tl_active)stopTlUi();
+    else if(tl_active){$('tl-n').textContent=st.tl_count;$('tl-status').textContent=st.tl_count+' frames  fn='+st.tl_fn;}
     if(!$('fslider').matches(':active')&&lp>=0)$('fslider').value=Math.round(lp*100);
     if(st.af!==af){af=st.af;$('btn-af').textContent='AF: '+(af?'ON':'OFF');$('btn-af').classList.toggle('on',af);}
     if(st.ae!==ae){ae=st.ae;$('btn-ae').textContent='AE: '+(ae?'ON':'OFF');$('btn-ae').classList.toggle('on',ae);}
