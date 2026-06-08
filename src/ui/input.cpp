@@ -49,6 +49,10 @@ void InputHandler::build_bindings(const KeyMap& keys) {
     cam_mode_sym_       = (vsym != SDLK_UNKNOWN) ? vsym : SDLK_v;
     (void)vshift;
 
+    auto [tlsym, tlshift] = parse_key_binding(keys.timelapse);
+    tl_sym_          = (tlsym != SDLK_UNKNOWN) ? tlsym : SDLK_l;
+    tl_needs_shift_  = tlshift;
+
     add(keys.cam_mode, true, [&]{ if (cbs_.on_cam_mode_toggle) cbs_.on_cam_mode_toggle(); });
 }
 
@@ -120,10 +124,17 @@ bool InputHandler::process_events() {
                 record_press_tick_ = SDL_GetTicks64();
             }
 
+            // ---- Timelapse hold start ----
+            if (sym == tl_sym_ && shift == tl_needs_shift_ && !ev.key.repeat) {
+                tl_held_       = true;
+                tl_press_tick_ = SDL_GetTicks64();
+            }
+
             // ---- Table-driven bindings ----
-            // Skip if this key is the quit or record key (handled separately).
+            // Skip if this key is the quit, record, or timelapse key (handled separately).
             bool is_record_key = (sym == record_sym_ && shift == record_needs_shift_);
-            if (!is_quit_key && !is_record_key) {
+            bool is_tl_key     = (sym == tl_sym_     && shift == tl_needs_shift_);
+            if (!is_quit_key && !is_record_key && !is_tl_key) {
                 for (auto& b : bindings_) {
                     if (b.sym == sym && b.shift == shift) {
                         if (!b.no_repeat || !ev.key.repeat)
@@ -161,6 +172,18 @@ bool InputHandler::process_events() {
             // Shift release cancels the record hold.
             if (sym == SDLK_LSHIFT || sym == SDLK_RSHIFT)
                 record_held_ = false;
+
+            // ---- Timelapse hold release ----
+            if (tl_held_ && sym == tl_sym_) {
+                uint64_t held = SDL_GetTicks64() - tl_press_tick_;
+                if (held >= kRecordHoldMs && shift == tl_needs_shift_) {
+                    if (cbs_.on_timelapse_toggle) cbs_.on_timelapse_toggle();
+                }
+                tl_held_ = false;
+            }
+            // Shift release cancels the timelapse hold (if bound to a shift key).
+            if (tl_needs_shift_ && (sym == SDLK_LSHIFT || sym == SDLK_RSHIFT))
+                tl_held_ = false;
         }
     }
 
@@ -195,4 +218,10 @@ float InputHandler::quit_hold_progress() const {
 bool InputHandler::help_visible() const {
     if (!help_held_) return false;
     return (SDL_GetTicks64() - help_press_tick_) >= kHelpHoldMs;
+}
+
+float InputHandler::timelapse_hold_progress() const {
+    if (!tl_held_) return 0.0f;
+    uint64_t held = SDL_GetTicks64() - tl_press_tick_;
+    return std::min(1.0f, (float)held / kRecordHoldMs);
 }

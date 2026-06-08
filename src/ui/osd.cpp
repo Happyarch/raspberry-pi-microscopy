@@ -292,9 +292,10 @@ void Osd::draw_icon(SDL_Texture* tex, int x, int y, uint8_t alpha) {
     SDL_RenderCopy(renderer_, tex, nullptr, &dst);
 }
 
-void Osd::draw_record_arc(int cx, int cy, int radius, float progress) {
+void Osd::draw_record_arc(int cx, int cy, int radius, float progress,
+                           SDL_Color color) {
     if (progress <= 0.0f) return;
-    SDL_SetRenderDrawColor(renderer_, 255, 60, 60, 255);
+    SDL_SetRenderDrawColor(renderer_, color.r, color.g, color.b, color.a);
     int segments = (int)(progress * 60);
     float start  = -(float)M_PI_2;
     float end    = start + progress * 2.0f * (float)M_PI;
@@ -500,6 +501,64 @@ void Osd::draw(const OsdState& state) {
         int dot_cx = pad_ + dot_r;
         int dot_cy = pad_ + dot_r;
         draw_record_arc(dot_cx, dot_cy, dot_r + 4, state.record_hold_progress);
+    }
+
+    // ---- Timelapse active indicator (top-left, same zone as REC but amber) ----
+    if (state.tl_active) {
+        uint64_t now   = now_ms();
+        int dot_r      = bar_h_ / 4;
+        int dot_cx     = pad_ + dot_r;
+        int dot_cy     = pad_ + dot_r;
+        SDL_Color kAmber = {230, 160, 0, 255};
+
+        // Countdown arc: progress = fraction of current interval already elapsed.
+        float arc_prog = 0.0f;
+        if (state.tl_interval_ms > 0) {
+            uint64_t elapsed_in_interval =
+                (now < state.tl_next_ms)
+                ? (state.tl_interval_ms - (state.tl_next_ms - now))
+                : state.tl_interval_ms;
+            arc_prog = std::min(1.0f,
+                (float)elapsed_in_interval / (float)state.tl_interval_ms);
+        }
+        draw_record_arc(dot_cx, dot_cy, dot_r + 4, arc_prog, kAmber);
+
+        // Small amber dot (always visible, no blink — distinct from REC blink)
+        SDL_SetRenderDrawColor(renderer_, 230, 160, 0, 255);
+        for (int dy = -dot_r; dy <= dot_r; ++dy)
+            for (int dx = -dot_r; dx <= dot_r; ++dx)
+                if (dx * dx + dy * dy <= dot_r * dot_r)
+                    SDL_RenderDrawPoint(renderer_, dot_cx + dx, dot_cy + dy);
+
+        // Frame count + countdown label
+        char count_buf[16];
+        snprintf(count_buf, sizeof(count_buf), "TL %03d", state.tl_count);
+
+        char cd_buf[24] = "";
+        if (state.tl_interval_ms > 0) {
+            uint64_t rem = (now < state.tl_next_ms) ? (state.tl_next_ms - now) : 0;
+            if (rem >= 60000) {
+                uint64_t m = rem / 60000;
+                uint64_t s = (rem % 60000) / 1000;
+                snprintf(cd_buf, sizeof(cd_buf), " \xe2\x86\x90%llum%02llus",
+                         (unsigned long long)m, (unsigned long long)s);
+            } else {
+                float sf = rem / 1000.0f;
+                snprintf(cd_buf, sizeof(cd_buf), " \xe2\x86\x90%.1fs", sf);
+            }
+        }
+
+        draw_text(std::string(count_buf) + cd_buf,
+                  dot_cx + dot_r + pad_, dot_cy - font_sz_ / 2, kAmber);
+    }
+
+    // ---- Timelapse hold progress arc ----
+    if (state.tl_hold_progress > 0.0f && !state.tl_active && !state.recording) {
+        int dot_r  = bar_h_ / 4;
+        int dot_cx = pad_ + dot_r;
+        int dot_cy = pad_ + dot_r;
+        SDL_Color kAmber = {230, 160, 0, 255};
+        draw_record_arc(dot_cx, dot_cy, dot_r + 4, state.tl_hold_progress, kAmber);
     }
 
     // ---- Quit hold warning (center screen, appears at 2.5 s) ----

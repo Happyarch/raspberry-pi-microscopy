@@ -19,6 +19,7 @@ struct InputCallbacks {
     std::function<void()>    on_toggle_af;
     std::function<void()>    on_still;
     std::function<void()>    on_record_toggle;   // fires after hold threshold
+    std::function<void()>    on_timelapse_toggle; // fires after hold threshold
     std::function<void()>    on_toggle_crosshair;
     std::function<void()>    on_quit;
 
@@ -44,6 +45,9 @@ public:
 
     // 0.0–1.0 progress of current Shift+R hold (0 if not held).
     float record_hold_progress() const;
+
+    // 0.0–1.0 progress of current timelapse key hold (0 if not held).
+    float timelapse_hold_progress() const;
 
     // 0.0–1.0 progress of current quit key hold (0 if not held).
     // Warning shows at 0.5 (2.5 s); quit fires at 1.0 (5 s).
@@ -73,6 +77,12 @@ private:
     uint64_t record_press_tick_{0};
     SDL_Keycode record_sym_{SDLK_r};
     bool        record_needs_shift_{true};
+
+    // Timelapse hold
+    bool        tl_held_{false};
+    uint64_t    tl_press_tick_{0};
+    SDL_Keycode tl_sym_{SDLK_l};
+    bool        tl_needs_shift_{false};
 
     // Quit hold — tracks whichever quit key was pressed first
     bool        quit_held_{false};

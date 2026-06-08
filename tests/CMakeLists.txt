@@ -85,3 +85,13 @@ target_link_libraries(test_mjpeg_server PRIVATE
     OpenSSL::Crypto
 )
 add_test(NAME mjpeg_server COMMAND test_mjpeg_server)
+
+# ---------------------------------------------------------------------------
+# test_timelapse — exercises interval schedule functions (header-only, no deps)
+# ---------------------------------------------------------------------------
+add_executable(test_timelapse
+    test_timelapse.cpp
+)
+target_include_directories(test_timelapse PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_timelapse PRIVATE GTest::gtest_main)
+add_test(NAME timelapse COMMAND test_timelapse)

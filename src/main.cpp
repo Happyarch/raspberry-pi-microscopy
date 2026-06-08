@@ -9,11 +9,13 @@
 #include "util/mjpeg_server.h"
 #include "util/resolution.h"
 #include "util/socket_server.h"
+#include "util/timelapse.h"
 
 #include <SDL2/SDL.h>
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <fstream>
 #include <cstdlib>
 #include <cmath>
 #include <filesystem>
@@ -183,6 +185,17 @@ int main() {
     bool       recording      = false;
     uint64_t   record_start   = 0;
     int        still_count    = 0;
+
+    // Timelapse state
+    bool        tl_active           = false;
+    uint64_t    tl_start_mono       = 0;    // now_ms() at session start
+    uint64_t    tl_next_ms          = 0;    // absolute time of next capture
+    int         tl_count            = 0;    // frames captured this session
+    uint64_t    tl_interval_ms      = 0;    // current I(n)
+    int         tl_max_frames_run   = 0;    // per-run override of cfg.tl_max_frames
+    std::string tl_session_dir;
+    TlFn        tl_fn_run           = TlFn::Linear;
+    TlParams    tl_params_run;
     bool       af_enabled     = cfg.initial_af_enabled;
     bool       show_crosshair = cfg.show_crosshair;
     bool       should_quit    = false;
@@ -201,6 +214,84 @@ int main() {
     if (aperture_fs > 0.0f) camera.set_aperture(aperture_fs);
     camera.set_ae_enable(true);
     camera.set_af_enable(af_enabled);
+
+    // ---- Timelapse helpers ----
+
+    auto stop_timelapse = [&]() {
+        if (!tl_active) return;
+        tl_active = false;
+        uint64_t elapsed = now_ms() - tl_start_mono;
+
+        std::string new_name;
+        if (cfg.tl_use_rtc) {
+            // Append end timestamp to the start-timestamp dir name
+            new_name = fs::path(tl_session_dir).filename().string()
+                       + "--" + timestamp_filename("");
+        } else {
+            // Rename to human-readable elapsed duration
+            uint64_t h  = elapsed / 3600000;
+            uint64_t m  = (elapsed % 3600000) / 60000;
+            uint64_t s  = (elapsed % 60000) / 1000;
+            uint64_t ms = elapsed % 1000;
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%02lluh%02llum%02llus%03llums",
+                     (unsigned long long)h, (unsigned long long)m,
+                     (unsigned long long)s, (unsigned long long)ms);
+            new_name = buf;
+        }
+
+        std::string new_path = ensure_dir(cfg.tl_dir) + "/" + new_name;
+        std::error_code ec;
+        fs::rename(tl_session_dir, new_path, ec);
+        if (ec)
+            std::cerr << "[tl] rename failed: " << ec.message() << "\n";
+        else
+            tl_session_dir = new_path;
+
+        std::cerr << "[tl] stopped: " << tl_count
+                  << " frames, dir: " << tl_session_dir << "\n";
+    };
+
+    auto start_timelapse = [&](TlFn fn, TlParams params, int max_frames) -> bool {
+        if (tl_active || recording) return false;
+
+        tl_fn_run         = fn;
+        tl_params_run     = params;
+        tl_max_frames_run = max_frames;
+        tl_count          = 0;
+        tl_start_mono     = now_ms();
+        tl_interval_ms    = next_interval(0, tl_fn_run, tl_params_run);
+        tl_next_ms        = tl_start_mono + tl_interval_ms;
+
+        std::string dir_name;
+        if (cfg.tl_use_rtc) {
+            dir_name = timestamp_filename("");   // YYYYMMDD_HHMMSS
+        } else {
+            dir_name = "tl_" + std::to_string(tl_start_mono);
+        }
+        tl_session_dir = ensure_dir(cfg.tl_dir) + "/" + dir_name;
+        fs::create_directories(tl_session_dir);
+
+        // Write session metadata
+        std::ofstream jf(tl_session_dir + "/session.json");
+        if (jf) {
+            jf << "{"
+               << "\"fn\":\"" << tl_fn_name(fn) << "\""
+               << ",\"base_ms\":"  << params.base_ms
+               << ",\"k\":"        << params.k
+               << ",\"floor_ms\":" << params.floor_ms
+               << ",\"ceil_ms\":"  << params.ceil_ms
+               << ",\"max_frames\":" << max_frames
+               << ",\"use_rtc\":"  << (cfg.tl_use_rtc ? "true" : "false")
+               << "}";
+        }
+
+        tl_active = true;
+        std::cerr << "[tl] started: fn=" << tl_fn_name(fn)
+                  << " base=" << params.base_ms << "ms"
+                  << " dir=" << tl_session_dir << "\n";
+        return true;
+    };
 
     auto apply_mode = [&](ExposureMode m) {
         mode     = m;
@@ -325,9 +416,9 @@ int main() {
 
     cbs.on_toggle_crosshair = [&]{ show_crosshair = !show_crosshair; };
 
-    auto do_still = [&](std::string path) -> bool {
+    auto do_still = [&](std::string path, bool count = true) -> bool {
         if (!camera.capture_still(path, still_fmt)) return false;
-        ++still_count;
+        if (count) ++still_count;
         if (still_fmt != StillFormat::RAW) {
             CameraStatus st = camera.get_status();
             ExifParams exif;
@@ -385,6 +476,7 @@ int main() {
 
     cbs.on_record_toggle = [&]{
         if (!recording) {
+            if (tl_active) return; // mutual exclusion
             std::string path = ensure_dir(cfg.video_dir) + "/" + timestamp_filename(".mkv");
             if (encoder.open(path)) {
                 recording    = true;
@@ -393,6 +485,24 @@ int main() {
         } else {
             encoder.close();
             recording = false;
+        }
+    };
+
+    cbs.on_timelapse_toggle = [&]{
+        if (tl_active) {
+            stop_timelapse();
+        } else {
+            if (recording) return; // mutual exclusion
+            TlParams params;
+            params.base_ms    = cfg.tl_base_ms;
+            params.k          = cfg.tl_rate_constant;
+            params.power      = cfg.tl_power;
+            params.beta       = cfg.tl_beta;
+            params.inflection = cfg.tl_inflection;
+            params.floor_ms   = cfg.tl_floor_ms;
+            params.ceil_ms    = cfg.tl_ceil_ms;
+            TlFn fn = parse_tl_fn(cfg.tl_fn, params);
+            start_timelapse(fn, params, cfg.tl_max_frames);
         }
     };
 
@@ -539,6 +649,78 @@ int main() {
             return "OK";
         }
 
+        if (verb == "timelapse") {
+            if (args.size() < 2)
+                return "ERR usage: timelapse start|stop|status";
+            const auto& sub = args[1];
+
+            if (sub == "stop") {
+                if (!tl_active) return "ERR not running";
+                stop_timelapse();
+                return "OK";
+            }
+
+            if (sub == "status") {
+                std::ostringstream j;
+                j << "{"
+                  << "\"active\":"    << (tl_active ? "true" : "false")
+                  << ",\"count\":"    << tl_count
+                  << ",\"fn\":\""     << tl_fn_name(tl_fn_run) << "\""
+                  << ",\"base_ms\":"  << tl_params_run.base_ms
+                  << ",\"k\":"        << tl_params_run.k
+                  << ",\"floor_ms\":" << tl_params_run.floor_ms
+                  << ",\"ceil_ms\":"  << tl_params_run.ceil_ms
+                  << ",\"interval_ms\":" << tl_interval_ms;
+                if (tl_active) {
+                    uint64_t now_t = now_ms();
+                    uint64_t rem = (now_t < tl_next_ms) ? (tl_next_ms - now_t) : 0;
+                    j << ",\"next_in_ms\":" << rem;
+                }
+                j << "}";
+                return j.str();
+            }
+
+            if (sub == "start") {
+                if (tl_active)  return "ERR already running";
+                if (recording)  return "ERR cannot timelapse while recording";
+
+                TlParams params;
+                params.base_ms    = cfg.tl_base_ms;
+                params.k          = cfg.tl_rate_constant;
+                params.power      = cfg.tl_power;
+                params.beta       = cfg.tl_beta;
+                params.inflection = cfg.tl_inflection;
+                params.floor_ms   = cfg.tl_floor_ms;
+                params.ceil_ms    = cfg.tl_ceil_ms;
+                std::string fn_name = cfg.tl_fn;
+                int max_frames = cfg.tl_max_frames;
+
+                for (size_t i = 2; i < args.size(); ++i) {
+                    auto eq = args[i].find('=');
+                    if (eq == std::string::npos) continue;
+                    std::string k = args[i].substr(0, eq);
+                    std::string v = args[i].substr(eq + 1);
+                    try {
+                        if      (k == "base")       params.base_ms    = (uint64_t)std::stoull(v);
+                        else if (k == "fn")         fn_name           = v;
+                        else if (k == "k")          params.k          = std::stof(v);
+                        else if (k == "power")      params.power      = std::stof(v);
+                        else if (k == "beta")       params.beta       = std::stof(v);
+                        else if (k == "inflection") params.inflection = std::stoi(v);
+                        else if (k == "floor")      params.floor_ms   = (uint64_t)std::stoull(v);
+                        else if (k == "ceil")       params.ceil_ms    = (uint64_t)std::stoull(v);
+                        else if (k == "max")        max_frames        = std::stoi(v);
+                    } catch (...) { return "ERR invalid value for " + k; }
+                }
+
+                TlFn fn = parse_tl_fn(fn_name, params);
+                if (!start_timelapse(fn, params, max_frames)) return "ERR start failed";
+                return "OK fn=" + tl_fn_name(fn) + " base=" + std::to_string(params.base_ms) + "ms";
+            }
+
+            return "ERR usage: timelapse start|stop|status";
+        }
+
         return "ERR unknown command: " + verb;
     };
 
@@ -616,6 +798,33 @@ int main() {
                          frame.width, frame.height,
                          frame.y_stride, frame.uv_stride);
 
+        // ---- Timelapse frame capture ----
+        if (tl_active) {
+            uint64_t now = now_ms();
+            if (now >= tl_next_ms) {
+                std::string fname;
+                if (cfg.tl_use_rtc) {
+                    char buf[24];
+                    snprintf(buf, sizeof(buf), "frame_%06d.jpg", tl_count + 1);
+                    fname = buf;
+                } else {
+                    uint64_t elapsed = now - tl_start_mono;
+                    char buf[24];
+                    snprintf(buf, sizeof(buf), "t%010llu.jpg", (unsigned long long)elapsed);
+                    fname = buf;
+                }
+                if (do_still(tl_session_dir + "/" + fname, false)) {
+                    ++tl_count;
+                    if (tl_max_frames_run > 0 && tl_count >= tl_max_frames_run) {
+                        stop_timelapse();
+                    } else {
+                        tl_interval_ms = next_interval(tl_count, tl_fn_run, tl_params_run);
+                        tl_next_ms     = now_ms() + tl_interval_ms;
+                    }
+                }
+            }
+        }
+
         CameraStatus status         = camera.get_status();
         osd_state.aperture          = status.aperture;
         osd_state.exposure_us       = status.exposure_time;
@@ -629,10 +838,15 @@ int main() {
         osd_state.show_crosshair    = show_crosshair;
         osd_state.mode_list         = {cam_mode_open, cam_mode_selected,
                                        cam_mode_active, &cam_mode_labels};
+        osd_state.tl_active      = tl_active;
+        osd_state.tl_count       = tl_count;
+        osd_state.tl_next_ms     = tl_next_ms;
+        osd_state.tl_interval_ms = tl_interval_ms;
         if (input) {
             osd_state.record_hold_progress = input->record_hold_progress();
             osd_state.quit_hold_progress   = input->quit_hold_progress();
             osd_state.show_help            = input->help_visible();
+            osd_state.tl_hold_progress     = input->timelapse_hold_progress();
         }
 
         // Build status JSON for MJPEG /api/status
@@ -646,9 +860,12 @@ int main() {
               << ",\"lens_pos\":"   << (std::isnan(status.lens_position) ? -1.0f : status.lens_position)
               << ",\"af\":"         << (af_enabled     ? "true" : "false")
               << ",\"ae\":"         << (status.ae_enabled ? "true" : "false")
-              << ",\"recording\":"  << (recording      ? "true" : "false")
+              << ",\"recording\":"   << (recording      ? "true" : "false")
               << ",\"still_count\":" << still_count
               << ",\"dual_stream\":" << (camera.dual_stream() ? "true" : "false")
+              << ",\"tl_active\":"   << (tl_active ? "true" : "false")
+              << ",\"tl_count\":"    << tl_count
+              << ",\"tl_fn\":\""     << tl_fn_name(tl_fn_run) << "\""
               << "}";
             mjpeg.set_status(j.str());
         }
@@ -661,6 +878,7 @@ int main() {
         frame.release();
     }
 
+    if (tl_active) stop_timelapse();
     if (recording) encoder.close();
     camera.stop();
     return 0;

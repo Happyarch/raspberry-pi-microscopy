@@ -111,7 +111,21 @@
 - [ ] **Zoom / digital crop** — let the user zoom in on a region of the sensor using
   libcamera's `ScalerCrop` control.
 
-- [ ] **Time-lapse mode** — capture a still every N seconds; configurable from conf.
+- ✅ **Time-lapse mode** — implemented: 9 interval schedule functions (linear, exp_grow,
+  exp_decay, log, power/quadratic/cubic/quintic, michaelis, logistic, stretched_exp, hyperbolic)
+  with rate-constant `k`, base offset `B`, per-session floor/ceil clamping. Hold `l` ≥ 500 ms
+  to start/stop. Frames go to a separate `timelapses/` directory; session folder renamed from
+  start-timestamp to `start--end` on stop (RTC mode) or to elapsed-duration string (no-RTC
+  mode, set `tl_use_rtc = false` in config). Socket/REST: `timelapse start [fn=X] [k=V]
+  [base=N] [max=N]`, `timelapse stop`, `timelapse status`. OSD: amber arc countdown + frame
+  count. Unit tests in `tests/test_timelapse.cpp`.
+
+- [ ] **Timelapse — user-defined interval scripts** — allow a config key `tl_script` pointing
+  to an executable (shell script, Python, etc.) that is invoked as `script <frame_count>` and
+  returns the next interval in ms on stdout. This lets users implement arbitrary schedule logic
+  (e.g. read a sensor, query an API, implement a custom kinetic model) without recompiling.
+  The built-in fn= modes remain the default; `fn=script` activates the external hook.
+  Security: the script runs as the `microscopi` user with no elevated privileges.
 
 - ✅ **Network streaming** — HTTP-MJPEG stream at `http://<pi>:8080/stream`; browser
   web UI at `http://<pi>:8080/`; REST control at `POST /api/<cmd>` + `GET /api/status`.

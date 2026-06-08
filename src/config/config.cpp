@@ -136,6 +136,18 @@ Config load_config(const std::string& path) {
             else if (key == "stream_https")   c.stream_https   = parse_bool (key, val, c.stream_https);
             else if (key == "stream_cert")    c.stream_cert    = val;
             else if (key == "stream_key")     c.stream_key     = val;
+        } else if (section == "timelapse") {
+            if      (key == "tl_dir")           c.tl_dir           = val;
+            else if (key == "tl_base_ms")       c.tl_base_ms       = (uint64_t)parse_int(key, val, (int)c.tl_base_ms);
+            else if (key == "tl_fn")            c.tl_fn            = val;
+            else if (key == "tl_rate_constant") c.tl_rate_constant = parse_float(key, val, c.tl_rate_constant);
+            else if (key == "tl_power")         c.tl_power         = parse_float(key, val, c.tl_power);
+            else if (key == "tl_beta")          c.tl_beta          = parse_float(key, val, c.tl_beta);
+            else if (key == "tl_inflection")    c.tl_inflection    = parse_int  (key, val, c.tl_inflection);
+            else if (key == "tl_floor_ms")      c.tl_floor_ms      = (uint64_t)parse_int(key, val, (int)c.tl_floor_ms);
+            else if (key == "tl_ceil_ms")       c.tl_ceil_ms       = (uint64_t)parse_int(key, val, (int)c.tl_ceil_ms);
+            else if (key == "tl_max_frames")    c.tl_max_frames    = parse_int  (key, val, c.tl_max_frames);
+            else if (key == "tl_use_rtc")       c.tl_use_rtc       = parse_bool (key, val, c.tl_use_rtc);
         } else if (section == "keys") {
             using KF = std::string KeyMap::*;
             static const std::unordered_map<std::string, KF> key_fields = {
@@ -156,6 +168,7 @@ Config load_config(const std::string& path) {
                 {"toggle_af",       &KeyMap::toggle_af},
                 {"still",           &KeyMap::still},
                 {"record",          &KeyMap::record},
+                {"timelapse",       &KeyMap::timelapse},
                 {"crosshair",       &KeyMap::crosshair},
                 {"quit",            &KeyMap::quit},
                 {"help",            &KeyMap::help},
@@ -270,6 +283,7 @@ aperture_down   = left
 toggle_af       = shift+a
 still           = space
 record          = shift+r
+timelapse       = l
 crosshair       = c
 quit            = escape
 help            = h
@@ -308,6 +322,74 @@ stream_fps = 15
 stream_https = false
 stream_cert  =
 stream_key   =
+
+[timelapse]
+# Root directory for timelapse sessions. Each run creates a subdirectory named
+# YYYYMMDD_HHMMSS--YYYYMMDD_HHMMSS (start time to end time). On crash the
+# end-time suffix is absent. Frames are frame_000001.jpg, frame_000002.jpg, ...
+# Post-process with: ffmpeg -r 24 -i 'frame_%06d.jpg' -c:v libx264 -crf 18 out.mp4
+tl_dir = /home/microscopi/timelapses
+
+# B — base offset in milliseconds. This is the interval before the first capture
+# and the starting point for all non-linear functions. I(0) == tl_base_ms.
+tl_base_ms = 5000
+
+# Interval schedule function.
+# linear        — constant interval (tl_base_ms forever; tl_rate_constant ignored)
+# exp_grow      — first-order growth: I(n) = B·exp(k·n)        [ceil required]
+# exp_decay     — first-order decay:  I(n) = B·exp(-k·n)       [floor required]
+# log           — sublinear growth:   I(n) = B + k·ln(n+1)     [ceil required]
+# power         — power-law:          I(n) = B + k·n^p          [ceil required]
+# quadratic     — power alias, p=2
+# cubic         — power alias, p=3
+# quintic       — power alias, p=5
+# michaelis     — MM saturation:      I(n) = B+(C-B)·kn/(1+kn) [soft ceil]
+# logistic      — sigmoid / Hill:     I(n) = B+(C-B)·σ(k(n-m)) [soft floor+ceil]
+# stretched_exp — KWW dispersive:     I(n) = B·exp(k·n^β)      [ceil required]
+# hyperbolic    — 2nd-order decay:    I(n) = B/(1+k·n)          [floor required]
+tl_fn = linear
+
+# k — rate constant. Units and safe ranges depend on tl_fn:
+#   exp_grow/exp_decay  nepers/frame  (0.01–0.3; k=0.693 doubles interval every frame)
+#   log/power           ms/frame^p    (> 0)
+#   michaelis/hyperbolic 1/frame      (0.01–1.0; k=0.1 → midpoint at n=10)
+#   logistic            1/frame       (steepness at inflection; 0.05–0.5)
+#   stretched_exp       nepers/frame^β
+# Ignored by fn=linear.
+tl_rate_constant = 0.05
+
+# p — power exponent for fn=power (real-valued, e.g. 0.5, 1.5, 2, 3, 5).
+# Overridden to 2/3/5 when fn=quadratic/cubic/quintic.
+tl_power = 2.0
+
+# β — stretch exponent for fn=stretched_exp. Range (0, 1]. β=1 is pure exponential.
+# Typical biological value: 0.5–0.8.
+tl_beta = 0.7
+
+# m — frame number at the sigmoid midpoint for fn=logistic.
+# At this frame, I(m) = (tl_base_ms + tl_ceil_ms) / 2.
+tl_inflection = 50
+
+# Hard floor: interval is never shorter than this (ms). Critical for decay modes.
+# Must be >= camera still capture time (~2000 ms on Pi 3 single-stream).
+tl_floor_ms = 2000
+
+# Hard ceiling: interval is never longer than this (ms). Critical for growth modes.
+# Default: 300000 (5 minutes).
+tl_ceil_ms = 300000
+
+# Maximum frames per session. 0 = run until manually stopped.
+tl_max_frames = 0
+
+# Whether to use wall-clock time for folder and file names.
+# true  (default) — requires RTC or NTP sync at boot.
+#   Folders: YYYYMMDD_HHMMSS  while running, renamed YYYYMMDD_HHMMSS--YYYYMMDD_HHMMSS on stop.
+#   Files:   frame_000001.jpg, frame_000002.jpg ... (sequential; compatible with ffmpeg -i 'frame_%06d.jpg')
+# false — no wall clock needed; uses monotonic elapsed time.
+#   Folders: tl_{start_mono_ms}  while running, renamed to duration on stop (e.g. 01h23m45s678ms).
+#   Files:   t{elapsed_ms:010d}.jpg  (e.g. t0000005123.jpg — sortable by capture time)
+# Set to false on Pi units without an RTC and no network access on boot.
+tl_use_rtc = true
 )";
     std::cerr << "[config] wrote default config to " << path << "\n";
 }
