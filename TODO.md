@@ -66,8 +66,10 @@
 - ✅ **OSD icon color** — implemented: all SVG icons in `assets/icons/` have `stroke="white"`,
   so rsvg-convert renders them white directly. No runtime tinting needed.
 
-- [ ] **Font weight** — Roboto Condensed [wght] is a variable font. TTF_OpenFont loads at
-  default weight (400). Expose weight selection or switch to a static Regular TTF.
+- ✅ **Font weight** — replaced the 362 KB variable font (fvar wght 100–900) with a static
+  Regular (wght=400) instance generated via `fonttools varLib.instancer wght=400` (141 KB).
+  SDL2_ttf now renders the intended weight reliably. Apache 2.0 license notice preserved in
+  the font's name table; no code changes required.
 
 - ✅ **Graceful camera re-init** — implemented: after 30 consecutive `get_frame()` failures,
   `main.cpp` calls `camera.stop()`, `camera.reconnect()` (releases and re-acquires the
