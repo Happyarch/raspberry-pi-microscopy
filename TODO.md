@@ -113,12 +113,14 @@
 
 - ✅ **Time-lapse mode** — implemented: 9 interval schedule functions (linear, exp_grow,
   exp_decay, log, power/quadratic/cubic/quintic, michaelis, logistic, stretched_exp, hyperbolic)
-  with rate-constant `k`, base offset `B`, per-session floor/ceil clamping. Hold `l` ≥ 500 ms
-  to start/stop. Frames go to a separate `timelapses/` directory; session folder renamed from
-  start-timestamp to `start--end` on stop (RTC mode) or to elapsed-duration string (no-RTC
-  mode, set `tl_use_rtc = false` in config). Socket/REST: `timelapse start [fn=X] [k=V]
-  [base=N] [max=N]`, `timelapse stop`, `timelapse status`. OSD: amber arc countdown + frame
-  count. Unit tests in `tests/test_timelapse.cpp`.
+  with rate-constant `k`, base offset `B`, per-session floor/ceil clamping. Tap `T` to open
+  the timelapse dialog (interval in seconds + optional max frame cap); Enter to start, Esc to
+  cancel. Hold `T` ≥ 3 s while running to stop (amber arc in top bar). Frames go to a separate
+  `timelapses/` directory; session folder renamed from start-timestamp to `start--end` on stop
+  (RTC mode) or to elapsed-duration string (no-RTC mode, set `tl_use_rtc = false` in config).
+  Socket/REST: `timelapse start [fn=X] [k=V] [base=N] [max=N]`, `timelapse stop`,
+  `timelapse status`. OSD: amber `TL NNN` frame count in top bar. Unit tests in
+  `tests/test_timelapse.cpp`.
 
 - [ ] **Timelapse — user-defined interval scripts** — allow a config key `tl_script` pointing
   to an executable (shell script, Python, etc.) that is invoked as `script <frame_count>` and
@@ -139,7 +141,8 @@
   connect with `socat - UNIX-CONNECT:/run/microscopi/microscopi.sock` or `nc -U`.
   Commands: `ping`, `status` (JSON), `still`, `record_start`, `record_stop`,
   `focus <pos|up|down>`, `iso <val|auto>`, `shutter <us>`, `mode <p|a|s|m>`,
-  `af on|off`, `ae on|off`, `crosshair on|off`, `quit`, `help`.
+  `af on|off`, `crosshair on|off`, `timelapse start|stop|status`, `quit`, `help`.
+  AE is controlled by mode selection (P/A vs S/M) rather than a separate toggle.
 
 - [ ] **Calibration image** — press a key to overlay a reference grid for focus calibration.
 

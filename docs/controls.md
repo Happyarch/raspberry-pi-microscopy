@@ -17,13 +17,13 @@ Complete reference for all keyboard controls, timelapse functions, remote comman
 | `S` | Jump directly to Shutter-priority mode |
 | `M` | Jump directly to Manual mode |
 
-**P — Program:** Camera controls both shutter speed and ISO automatically. Good general-purpose starting point.
+**P — Program:** Camera controls both shutter speed and gain automatically. Good general-purpose starting point.
 
-**A — Aperture-priority:** AE adjusts shutter and ISO. On fixed-aperture lenses (all Pi camera modules) the aperture value is cosmetic; this mode behaves like P with manual ISO override.
+**A — Aperture-priority:** AE adjusts shutter and gain. On fixed-aperture lenses (all Pi camera modules) the aperture value is cosmetic. If ISO is set to a specific value (not AUTO), AE locks that gain and adjusts shutter only.
 
-**S — Shutter-priority:** You set shutter speed; if AE is on the camera adjusts ISO. Use for controlling motion blur at known magnifications.
+**S — Shutter-priority:** AE is disabled. You set shutter speed; ISO must also be set manually. Use for controlling motion blur at known magnifications with repeatable exposure.
 
-**M — Manual:** You control shutter speed and ISO. AE is disabled. Essential for quantitative fluorescence or when you need repeatable, drift-free exposure across a timelapse.
+**M — Manual:** AE is disabled. You control both shutter speed and ISO. Essential for quantitative fluorescence or drift-free timelapse exposure.
 
 ---
 
@@ -33,12 +33,12 @@ Complete reference for all keyboard controls, timelapse functions, remote comman
 |-----|--------|
 | `↑` | Step lens toward macro (shorter focus distance); exits AF |
 | `↓` | Step lens toward infinity (longer focus distance); exits AF |
-| `Shift+A` | Toggle autofocus (AF) on/off |
+| `F` | Toggle autofocus (AF) on/off |
 | Mouse wheel | Scroll to adjust focus (same step size as keyboard) |
 
 Lens position is a normalized value `0.0` (infinity) to `1.0` (minimum focus distance / macro). Steps are configurable: `focus_key_step` (default `0.05`) and `focus_scroll_step` (default `0.01`).
 
-When AF is active the OSD shows **AF**. When manual, it shows **MF 0.42** (current position). Pressing `↑` or `↓` always switches to manual focus immediately.
+When AF is active the OSD shows **AF**. When manual it shows **MF**. Pressing `↑` or `↓` always switches to manual focus immediately.
 
 ---
 
@@ -73,7 +73,7 @@ The ladder covers **f/1.0 – f/32** in 1/3-stop steps (ISO/CIPA convention, 31 
 | `I` | ISO up one step |
 | `Shift+I` | ISO down one step |
 
-The first press from AUTO locks to the nearest value on the ISO ladder (100–6400). Steps snap to standard values: 100, 125, 160, 200, 250, 320, 400, 500, 640, 800, 1000, 1250, 1600, 2000, 2500, 3200, 4000, 5000, 6400. There is no key to return to AUTO — use the web UI or socket `iso auto` command.
+ISO is cyclic. Steps snap to standard values: 100, 125, 160, 200, 250, 320, 400, 500, 640, 800, 1000, 1250, 1600, 2000, 2500, 3200, 4000, 5000, 6400. Pressing `I` up from the maximum (6400) wraps back to AUTO. Pressing `Shift+I` down from AUTO wraps to the maximum; pressing down from the minimum (100) also returns to AUTO.
 
 ---
 
@@ -83,13 +83,14 @@ The first press from AUTO locks to the nearest value on the ISO ladder (100–64
 |-----|--------|
 | `Space` | Capture still |
 | `Shift+R` (hold ≥ 500 ms) | Start / stop video recording |
-| `T` (hold ≥ 500 ms) | Start / stop timelapse |
+| `T` (tap) | Open timelapse dialog (when idle) |
+| `T` (hold ≥ 3 s, while running) | Stop timelapse |
 
 **Still capture:** Briefly reconfigures the sensor to full-resolution `StillCapture` mode, takes one frame, injects EXIF metadata (aperture, shutter, ISO, lens position, exposure mode, timestamp, camera model), then returns to the viewfinder. Saved to `~/stills/YYYYMMDD_HHMMSS.jpg`. Format is configurable: `jpeg`, `raw`, or `jpeg+raw`.
 
 **Video recording:** Hold `Shift+R` for 500 ms — a red arc grows in the top-left corner while held. On release the recording starts (or stops if already recording). A blinking red dot and `HH:MM:SS'AS` timestamp appear top-left. The timestamp format uses arc-seconds (1/60 s) as the sub-second unit: it divides evenly at both 30 fps and 60 fps using integer arithmetic only. Saved to `~/videos/YYYYMMDD_HHMMSS.mkv`.
 
-**Timelapse:** See the [Timelapse Mode](#timelapse-mode) section below. Hold `T` for 500 ms to start; hold again to stop. An amber arc countdown and frame counter appear top-left while active. Timelapse and video recording are mutually exclusive.
+**Timelapse:** See the [Timelapse Mode](#timelapse-mode) section below. Tap `T` to open the timelapse dialog: enter an interval in seconds and an optional max frame count (0 = unlimited), Tab to switch between fields, Enter to start, Esc to cancel. While timelapse is running, hold `T` for 3 s to stop — an amber arc grows in the top bar as you hold. Timelapse and video recording are mutually exclusive.
 
 ---
 
@@ -110,7 +111,11 @@ Timelapse captures a still at a configurable interval and stores frames in a nam
 
 ### Starting from the keyboard
 
-Hold `T` for 500 ms. The session uses the parameters from `microscopi.conf`. To use a different interval or function without editing the config, use the socket or web UI.
+Tap `T` to open the timelapse dialog. Enter an interval in seconds (minimum 0.5 s, default 5 s) and an optional max frame count (0 = unlimited, default 0). Tab to switch between the two fields; Enter to confirm and start; Esc to cancel.
+
+The keyboard dialog sets the linear base interval and frame cap only. For advanced interval schedule functions (`exp_grow`, `logistic`, etc.) or fine-grained parameter tuning, use the socket or web UI instead.
+
+To stop a running timelapse from the keyboard, hold `T` for 3 s — an amber arc in the top-right of the OSD grows as you hold, then the session stops and the session directory is renamed.
 
 ### Session directories
 
@@ -229,7 +234,6 @@ curl "http://192.168.1.220:8080/api/status"
 | `shutter <us>` | `OK` | Set shutter speed in microseconds (e.g. `shutter 16667`) |
 | `mode <p\|a\|s\|m>` | `OK` | Set exposure mode |
 | `af on\|off` | `OK` | Toggle autofocus |
-| `ae on\|off` | `OK` | Toggle autoexposure |
 | `crosshair on\|off` | `OK` | Toggle crosshair overlay |
 | `timelapse start [args]` | `OK fn=… base=…ms` | Start timelapse (see below) |
 | `timelapse stop` | `OK` | Stop timelapse and rename session dir |
@@ -298,7 +302,7 @@ Open `http://<pi-ip>:8080/` in any browser. The page works on phones and tablets
 | Panel | Controls |
 |-------|----------|
 | **Capture** | Still button; Record start/stop (turns red when active) |
-| **Mode** | P / A / S / M buttons; AE and AF toggles |
+| **Mode** | P / A / S / M buttons; AF toggle |
 | **Focus** | Slider (0=∞ to 100=macro); Near / Far step buttons |
 | **ISO** | Dropdown (AUTO, 100–6400) |
 | **Shutter** | Dropdown (1/4000 s – 2 s) |

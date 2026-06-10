@@ -32,18 +32,19 @@ All bindings are rebindable in the `[keys]` section of `microscopi.conf`. Defaul
 | `↑` / `↓` | Focus step (switches to manual focus) |
 | `Shift+↑` / `Shift+↓` | Shutter speed +/− one stop (S and M modes) |
 | `←` / `→` | Aperture +/− (A and M modes; cosmetic on fixed-aperture lenses) |
-| `I` / `Shift+I` | ISO up / down (all modes; first press exits auto-ISO) |
-| `Shift+A` | Toggle autofocus on/off |
+| `I` / `Shift+I` | ISO up / down; wraps cyclically through AUTO |
+| `F` | Toggle autofocus on/off |
 | `Space` | Capture still (saved to `~/stills/`) |
 | `Shift+R` (hold 500 ms) | Start / stop video recording (saved to `~/videos/`) |
-| `T` (hold 500 ms) | Start / stop timelapse (saved to `~/timelapses/`) |
+| `T` (tap) | Open timelapse dialog — enter interval + frame cap, Enter to start |
+| `T` (hold 3 s, while running) | Stop timelapse |
 | `X` | Toggle center guide overlay (circle + crosshair) |
 | `H` | Show key binding help overlay (auto-dismisses after 4 s) |
 | `Esc` or `Q` (hold 5 s) | Quit (warning shown after 2.5 s) |
 
-While recording: a red dot flashes top-left with a `HH:MM:SS'AS` timestamp (arc-seconds = 1/60 s, divides evenly at 30 and 60 fps with integer arithmetic only).
+While recording: a red `● HH:MM:SS'AS` timestamp appears in the top bar (arc-seconds = 1/60 s, divides evenly at 30 and 60 fps with integer arithmetic only). A hold-arc grows in the top-left corner of the top bar while `Shift+R` is held before triggering.
 
-While a timelapse is running: an amber arc + frame counter is shown top-left. The arc sweeps toward the next capture time.
+While a timelapse is running: `TL NNN` (frame count) appears in the top bar in amber. Hold `T` for 3 s to stop — an amber arc grows in the top-left of the top bar.
 
 See [`docs/controls.md`](docs/controls.md) for a detailed reference covering all controls, timelapse functions, and remote commands.
 
@@ -126,7 +127,7 @@ focus_up = up
 focus_down = down
 aperture_up = right
 aperture_down = left
-toggle_af = shift+a
+toggle_af = f
 still = space
 record = shift+r
 timelapse = t

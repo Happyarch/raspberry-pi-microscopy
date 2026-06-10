@@ -100,7 +100,6 @@ path. The response is plain text.
 | `shutter <us>` | `POST /api/shutter%2016667` | Set shutter speed in microseconds. |
 | `mode <p\|a\|s\|m>` | `POST /api/mode%20s` | Switch exposure mode. |
 | `af on\|off` | `POST /api/af%20on` | Toggle autofocus. |
-| `ae on\|off` | `POST /api/ae%20on` | Toggle autoexposure. |
 | `quit` | `POST /api/quit` | Graceful shutdown. |
 | `timelapse start [args]` | `POST /api/timelapse%20start%20base%3D5000` | Start timelapse. See [`docs/controls.md`](controls.md) for all arguments. |
 | `timelapse stop` | `POST /api/timelapse%20stop` | Stop timelapse; renames session directory. |
