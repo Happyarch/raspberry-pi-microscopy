@@ -19,6 +19,9 @@ compile_commands.json
 *.img.gz
 *.img.zst
 
+# Project-local dev tools (populated by scripts/bootstrap-tools.sh, not committed)
+tools/
+
 # Claude Code local session data
 .claude/
 

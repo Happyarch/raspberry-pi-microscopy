@@ -2,10 +2,8 @@
 # Build a .deb package from the artifacts already in deploy/install/.
 # Run scripts/build-app.sh first to populate deploy/install/.
 #
-# Prerequisites on Arch Linux:
-#   sudo pacman -S dpkg
-# Prerequisites on Debian/Ubuntu:
-#   dpkg is already present.
+# dpkg-deb is sourced from tools/bin/ (project-local, not system-installed).
+# To refresh it: scripts/bootstrap-tools.sh
 #
 # Output: deploy/microscopi_<version>_arm64.deb
 set -euo pipefail
@@ -15,11 +13,14 @@ DEPLOY_DIR="$REPO_ROOT/deploy"
 INSTALL_DIR="$DEPLOY_DIR/install"
 FILES_DIR="$REPO_ROOT/config/pi-gen/stage3/01-microscopi/files"
 
-# --- Sanity checks ---
-command -v dpkg-deb >/dev/null 2>&1 || {
-    echo "ERROR: dpkg-deb not found. Install it:"
-    echo "  Arch:   sudo pacman -S dpkg"
-    echo "  Debian: apt-get install dpkg"
+# Prefer the project-local dpkg-deb; fall back to whatever is on PATH.
+DPKG_DEB="$REPO_ROOT/tools/bin/dpkg-deb"
+if [[ ! -x "$DPKG_DEB" ]]; then
+    DPKG_DEB=$(command -v dpkg-deb 2>/dev/null || true)
+fi
+[[ -x "$DPKG_DEB" ]] || {
+    echo "ERROR: dpkg-deb not found."
+    echo "  Run: ./scripts/bootstrap-tools.sh"
     exit 1
 }
 
@@ -172,7 +173,7 @@ chmod 755 "$STAGING/DEBIAN/postrm"
 # --- Build ---
 # --root-owner-group: sets uid/gid to 0:0 (root:root) in the archive,
 # regardless of who owns the staging files on the host.
-dpkg-deb --root-owner-group --build "$STAGING" "$DEPLOY_DIR/$DEB_FILENAME"
+"$DPKG_DEB" --root-owner-group --build "$STAGING" "$DEPLOY_DIR/$DEB_FILENAME"
 
 echo "==> Done."
 echo "    Package: $DEPLOY_DIR/$DEB_FILENAME"
