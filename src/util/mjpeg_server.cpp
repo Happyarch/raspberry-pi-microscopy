@@ -97,7 +97,6 @@ select{
       <button id="ms" onclick="setMode('s')">S</button>
       <button id="mm" onclick="setMode('m')">M</button>
     </div>
-    <button id="btn-ae" onclick="toggleAe()">AE: ON</button>
     <button id="btn-af" onclick="toggleAf()">AF: ON</button>
   </div>
   <div class="grp">
@@ -141,7 +140,7 @@ select{
 'use strict';
 const $=id=>document.getElementById(id);
 const msg=t=>{$('msg').textContent=t;};
-let ae=true,af=true,recording=false,recStart=0,recTick=null,tl_active=false;
+let af=true,recording=false,recStart=0,recTick=null,tl_active=false;
 async function cmd(c){
   try{
     const r=await fetch('/api/'+encodeURIComponent(c),{method:'POST'});
@@ -153,7 +152,6 @@ function setMode(m){
   ['p','a','s','m'].forEach(x=>$('m'+x).classList.remove('on'));
   $('m'+m).classList.add('on');
 }
-function toggleAe(){ae=!ae;cmd('ae '+(ae?'on':'off'));$('btn-ae').textContent='AE: '+(ae?'ON':'OFF');$('btn-ae').classList.toggle('on',ae);}
 function toggleAf(){af=!af;cmd('af '+(af?'on':'off'));$('btn-af').textContent='AF: '+(af?'ON':'OFF');$('btn-af').classList.toggle('on',af);}
 function setIso(v){cmd(v==='auto'?'iso auto':'iso '+v);}
 function setShutter(us){cmd('shutter '+us);}
@@ -227,7 +225,6 @@ async function pollStatus(){
     else if(tl_active){$('tl-n').textContent=st.tl_count;$('tl-status').textContent=st.tl_count+' frames  fn='+st.tl_fn;}
     if(!$('fslider').matches(':active')&&lp>=0)$('fslider').value=Math.round(lp*100);
     if(st.af!==af){af=st.af;$('btn-af').textContent='AF: '+(af?'ON':'OFF');$('btn-af').classList.toggle('on',af);}
-    if(st.ae!==ae){ae=st.ae;$('btn-ae').textContent='AE: '+(ae?'ON':'OFF');$('btn-ae').classList.toggle('on',ae);}
     const m=(st.mode||'P').toLowerCase();
     ['p','a','s','m'].forEach(x=>$('m'+x).classList.toggle('on',x===m));
   }catch(e){}

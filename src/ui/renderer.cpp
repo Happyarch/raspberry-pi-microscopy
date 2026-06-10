@@ -5,6 +5,11 @@
 Renderer::Renderer(int width, int height)
     : width_(width), height_(height)
 {
+    // Grab keyboard so unbound keys don't leak to the underlying TTY.
+    // On kmsdrm/evdev this causes EVIOCGRAB on each input device, which
+    // exclusively locks them away from the kernel's VT/TTY input path.
+    SDL_SetHint(SDL_HINT_GRAB_KEYBOARD, "1");
+
     if (SDL_Init(SDL_INIT_VIDEO) != 0)
         throw std::runtime_error(std::string("SDL_Init: ") + SDL_GetError());
 
@@ -15,6 +20,9 @@ Renderer::Renderer(int width, int height)
         SDL_WINDOW_FULLSCREEN_DESKTOP);
     if (!window_)
         throw std::runtime_error(std::string("SDL_CreateWindow: ") + SDL_GetError());
+
+    SDL_SetWindowGrab(window_, SDL_TRUE);
+    SDL_ShowCursor(SDL_DISABLE);
 
     renderer_ = SDL_CreateRenderer(window_, -1,
                                    SDL_RENDERER_ACCELERATED |

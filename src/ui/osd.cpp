@@ -1,9 +1,11 @@
 #include "osd.h"
+#include "../util/resolution.h"
 #include <SDL2/SDL_image.h>
 #include <sys/stat.h>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <sstream>
 #include <iomanip>
 #include <filesystem>
@@ -40,9 +42,9 @@ Osd::Osd(SDL_Renderer* renderer,
     warn_sz_ = std::max(18, dh_ / 20);
     pad_     = std::max( 6, (int)(bar_h_ * 0.16f));
 
-    // Cache directory is per display height so different resolutions get their
-    // own correctly-sized PNGs.
-    cache_dir_ = cache_dir + "/" + std::to_string(dh_);
+    // Cache directory is per display height. The "w" suffix means white-stroke icons;
+    // changing it forces regeneration if an older black-icon cache exists.
+    cache_dir_ = cache_dir + "/" + std::to_string(dh_) + "w";
     ensure_cache_dir();
 
     TTF_Init();
@@ -74,8 +76,16 @@ SDL_Texture* Osd::load_icon(const std::string& name) {
     std::string svg_path = icons_dir_ + "/" + name + ".svg";
 
     // Render SVG → PNG if the cached file doesn't exist yet.
+    // Lucide icons use stroke="currentColor"; supply a stylesheet so rsvg-convert
+    // renders them white instead of the default black.
     if (!fs::exists(png_path)) {
+        std::string css_path = cache_dir_ + "/icons.css";
+        if (!fs::exists(css_path)) {
+            std::ofstream css(css_path);
+            css << "svg{color:white;stroke:white;}";
+        }
         std::string cmd = "rsvg-convert"
+                          " --stylesheet=\"" + css_path + "\""
                           " -w " + std::to_string(icon_sz_) +
                           " -h " + std::to_string(icon_sz_) +
                           " \"" + svg_path + "\""
@@ -142,23 +152,23 @@ void Osd::draw_help_overlay() {
     const std::string aperture_str = keys_.aperture_up + " / " + keys_.aperture_down;
     const std::string iso_str      = keys_.iso_up      + " / " + keys_.iso_down;
     const std::string record_str   = keys_.record      + "  (hold)";
-    const std::string tl_str       = keys_.timelapse   + "  (hold)";
+    const std::string tl_str       = keys_.timelapse   + "  (tap / hold 3s to stop)";
     const std::string quit_str     = keys_.quit        + " or q  (hold 5 s)";
 
     const Row rows[] = {
-        {"Mode",        mode_direct},
-        {"",            mode_cycle},
-        {"Shutter ±",   shutter_str},
-        {"Focus ±",     focus_str},
-        {"Aperture ±",  aperture_str},
-        {"ISO ±",       iso_str},
-        {"Autofocus",   keys_.toggle_af},
-        {"Still",       keys_.still},
-        {"Record",      record_str},
-        {"Timelapse",   tl_str},
-        {"Crosshair",   keys_.crosshair},
-        {"Help",        keys_.help},
-        {"Quit",        quit_str},
+        {"Mode",          mode_direct},
+        {"",              mode_cycle},
+        {"Shutter ±",     shutter_str},
+        {"Focus ±",       focus_str},
+        {"Aperture ±",    aperture_str},
+        {"ISO ±",         iso_str},
+        {"Autofocus",     keys_.toggle_af},
+        {"Still",         keys_.still},
+        {"Record",        record_str},
+        {"Timelapse",     tl_str},
+        {"Crosshair",     keys_.crosshair},
+        {"Help",          keys_.help},
+        {"Quit",          quit_str},
     };
     const int n_rows = (int)(sizeof(rows) / sizeof(rows[0]));
 
@@ -343,7 +353,7 @@ void Osd::draw_crosshair() {
 }
 
 // ---------------------------------------------------------------------------
-// Main draw — called every frame
+// Top bar
 // ---------------------------------------------------------------------------
 
 static const char* mode_label(int m) {
@@ -356,58 +366,204 @@ static const char* mode_label(int m) {
     }
 }
 
-void Osd::draw(const OsdState& state) {
+void Osd::draw_top_bar(const OsdState& state) {
     const SDL_Color kWhite = {255, 255, 255, 255};
-    const SDL_Color kDim   = {150, 150, 150, 200};
+    const SDL_Color kDim   = {120, 120, 120, 200};
     const SDL_Color kRed   = {220,  40,  40, 255};
+    const SDL_Color kAmber = {230, 160,   0, 255};
 
-    // Guide overlay drawn first so the bottom bar sits on top of it.
-    if (state.show_crosshair) draw_crosshair();
+    int top_icon_y = (bar_h_ - icon_sz_) / 2;
+    int top_text_y = (bar_h_ - font_sz_ - 2) / 2;
 
-    int bar_y   = dh_ - bar_h_;
-    int icon_y  = bar_y + (bar_h_ - icon_sz_) / 2;
-    int text_y  = bar_y + (bar_h_ - font_sz_ - 2) / 2;
-
-    // Background bar
     SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
     SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 175);
-    SDL_Rect bar{0, bar_y, dw_, bar_h_};
+    SDL_Rect bar{0, 0, dw_, bar_h_};
     SDL_RenderFillRect(renderer_, &bar);
 
-    auto text_w = [&](const std::string& s) {
+    // Column centers at dw/8, 3dw/8, 5dw/8, 7dw/8
+    int col1 = dw_ / 8;
+    int col2 = 3 * dw_ / 8;
+    int col3 = 5 * dw_ / 8;
+    int col4 = 7 * dw_ / 8;
+
+    auto draw_col_text = [&](const std::string& text, int cx, SDL_Color col,
+                              TTF_Font* f = nullptr) {
+        TTF_Font* ff = f ? f : font_;
+        int tw = 0, th = 0;
+        if (ff) TTF_SizeUTF8(ff, text.c_str(), &tw, &th);
+        draw_text(text, cx - tw / 2, top_text_y, col, f);
+    };
+
+    // ---- Col 1: Exposure mode (large) ----
+    draw_col_text(mode_label(state.exposure_mode), col1, kWhite, warn_font_);
+
+    // ---- Col 2: Camera icon + still count ----
+    {
+        char buf[8];
+        snprintf(buf, sizeof(buf), " %03d", state.still_count);
+        std::string label = buf;
+        int tw = 0, th = 0;
+        if (font_) TTF_SizeUTF8(font_, label.c_str(), &tw, &th);
+        int total_w = icon_sz_ + tw;
+        int sx = col2 - total_w / 2;
+        draw_icon(icons_["camera"], sx, top_icon_y);
+        draw_text(label, sx + icon_sz_, top_text_y, kWhite);
+    }
+
+    // ---- Col 3: Aspect ratio + resolution ----
+    if (state.cam_width > 0 && state.cam_height > 0) {
+        std::string ar  = aspect_str(state.cam_width, state.cam_height);
+        // × = U+00D7, UTF-8: C3 97
+        std::string res = ar + "  " + std::to_string(state.cam_width)
+                        + "\xc3\x97" + std::to_string(state.cam_height);
+        draw_col_text(res, col3, kWhite);
+    }
+
+    // ---- Col 4: Recording / TL active / Idle ----
+    if (state.recording) {
+        uint64_t ms      = now_ms() - state.record_start_ms;
+        uint64_t total_s = ms / 1000;
+        uint64_t arc_s   = (ms % 1000) * 60 / 1000;
+        uint64_t s = total_s % 60, m = (total_s / 60) % 60, h = total_s / 3600;
+        char ts[40];
+        // ● = U+25CF, UTF-8: E2 97 8F
+        snprintf(ts, sizeof(ts), "\xe2\x97\x8f %02llu:%02llu:%02llu'%02llu",
+                 (unsigned long long)h, (unsigned long long)m,
+                 (unsigned long long)s, (unsigned long long)arc_s);
+        draw_col_text(ts, col4, kRed);
+    } else if (state.tl_active) {
+        char buf[24];
+        snprintf(buf, sizeof(buf), "TL  %03d", state.tl_count);
+        draw_col_text(buf, col4, kAmber);
+    } else {
+        draw_col_text("--:--:--", col4, kDim);
+    }
+
+    // ---- Hold arcs (top-left of top bar) ----
+    int dot_r  = bar_h_ / 4;
+    int dot_cx = pad_ + dot_r;
+    int dot_cy = bar_h_ / 2;
+
+    if (state.record_hold_progress > 0.0f)
+        draw_record_arc(dot_cx, dot_cy, dot_r + 4, state.record_hold_progress);
+
+    if (state.tl_hold_progress > 0.0f && state.tl_active)
+        draw_record_arc(dot_cx, dot_cy, dot_r + 4, state.tl_hold_progress, kAmber);
+}
+
+// ---------------------------------------------------------------------------
+// Timelapse config dialog
+// ---------------------------------------------------------------------------
+
+void Osd::draw_tl_dialog(const OsdState& state) {
+    if (!state.tl_dialog_open) return;
+
+    const SDL_Color kWhite = {255, 255, 255, 255};
+    const SDL_Color kDim   = {150, 150, 150, 200};
+
+    const int title_h  = warn_sz_ + pad_ * 2;
+    const int blank_h  = font_sz_ + pad_;
+    const int field_h  = font_sz_ + pad_ * 2;
+    const int footer_h = font_sz_ + pad_ * 2;
+    const int panel_w  = dw_ / 2;
+    const int panel_h  = title_h + blank_h + field_h * 2 + pad_ + footer_h + pad_;
+    const int px = (dw_ - panel_w) / 2;
+    const int py = (dh_ - panel_h) / 2;
+
+    // Measure label column width from the longer label
+    int label_col_w = font_sz_ * 10;
+    if (font_) {
+        int w1 = 0, w2 = 0, tmp = 0;
+        TTF_SizeUTF8(font_, "Interval (s):", &w1, &tmp);
+        TTF_SizeUTF8(font_, "Max frames:",   &w2, &tmp);
+        label_col_w = std::max(w1, w2) + pad_;
+    }
+
+    const int box_x     = px + pad_ + label_col_w;
+    const int box_w     = panel_w - pad_ * 2 - label_col_w;
+    const int box_tx    = box_x + pad_;
+
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer_, 10, 10, 10, 220);
+    SDL_Rect panel{px, py, panel_w, panel_h};
+    SDL_RenderFillRect(renderer_, &panel);
+
+    // Title
+    {
+        int tw = 0, th = 0;
+        if (warn_font_) TTF_SizeUTF8(warn_font_, "Timelapse", &tw, &th);
+        draw_text("Timelapse", px + (panel_w - tw) / 2, py + pad_, kWhite, warn_font_);
+    }
+
+    bool blink_on = (SDL_GetTicks64() / 500) % 2 == 0;
+
+    auto draw_field = [&](int idx, const char* label, const std::string& value, int fy) {
+        bool active = (state.tl_dialog_field == idx);
+        SDL_Color text_col = active ? kWhite : kDim;
+        draw_text(label, px + pad_, fy + pad_, text_col);
+
+        SDL_Color border = active ? SDL_Color{200, 200, 200, 255}
+                                  : SDL_Color{ 80,  80,  80, 200};
+        SDL_SetRenderDrawColor(renderer_, border.r, border.g, border.b, border.a);
+        SDL_Rect box{box_x, fy, box_w, field_h};
+        SDL_RenderDrawRect(renderer_, &box);
+
+        std::string display = value + (active && blink_on ? "_" : "");
+        draw_text(display, box_tx, fy + pad_, text_col);
+    };
+
+    int fy = py + title_h + blank_h;
+    draw_field(0, "Interval (s):", state.tl_dialog_interval, fy);
+    fy += field_h + pad_;
+    draw_field(1, "Max frames:",   state.tl_dialog_frames,   fy);
+
+    // Footer
+    const char* footer = "Tab switch  \xc2\xb7  Enter start  \xc2\xb7  Esc cancel";
+    {
+        int tw = 0, th = 0;
+        if (font_) TTF_SizeUTF8(font_, footer, &tw, &th);
+        draw_text(footer, px + (panel_w - tw) / 2,
+                  py + panel_h - footer_h + pad_, kDim);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Main draw — called every frame
+// ---------------------------------------------------------------------------
+
+void Osd::draw(const OsdState& state) {
+    const SDL_Color kWhite   = {255, 255, 255, 255};
+    const SDL_Color kInactive = {175, 175, 175, 255};
+
+    // Guide overlay drawn first so bars sit on top.
+    if (state.show_crosshair) draw_crosshair();
+
+    // Top bar: mode, stills, resolution, recording/TL status + hold arcs
+    draw_top_bar(state);
+
+    // ---- Bottom bar ----
+    int bar_y  = dh_ - bar_h_;
+    int icon_y = bar_y + (bar_h_ - icon_sz_) / 2;
+    int text_y = bar_y + (bar_h_ - font_sz_ - 2) / 2;
+
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 175);
+    SDL_Rect bot_bar{0, bar_y, dw_, bar_h_};
+    SDL_RenderFillRect(renderer_, &bot_bar);
+
+    auto tw = [&](const char* s) {
         int w = 0, h = 0;
-        if (font_) TTF_SizeUTF8(font_, s.c_str(), &w, &h);
+        if (font_) TTF_SizeUTF8(font_, s, &w, &h);
         return w;
     };
 
-    int cx = pad_;
+    // Four items centered at quarter columns: shutter | AE/AF | aperture | ISO
+    int col1 = dw_ / 8;
+    int col2 = 3 * dw_ / 8;
+    int col3 = 5 * dw_ / 8;
+    int col4 = 7 * dw_ / 8;
 
-    // ---- Aperture ----
-    draw_icon(icons_["aperture"], cx, icon_y);
-    cx += icon_sz_ + 4;
-    std::string ap_str;
-    if (state.aperture > 0.0f) {
-        std::ostringstream ss;
-        ss << "f/" << std::fixed << std::setprecision(1) << state.aperture;
-        ap_str = ss.str();
-    } else {
-        ap_str = "f/--";
-    }
-    draw_text(ap_str, cx, text_y, kWhite);
-    cx += text_w(ap_str) + pad_ * 2;
-
-    // ---- Mode ----
-    {
-        std::string mode_str = mode_label(state.exposure_mode);
-        // In P and A modes the camera drives exposure; dim the sun icon.
-        bool ae_auto = (state.exposure_mode == 0 || state.exposure_mode == 1);
-        draw_icon(icons_["sun"], cx, icon_y, ae_auto ? 255 : 100);
-        cx += icon_sz_ + 4;
-        draw_text(mode_str, cx, text_y, kWhite);
-        cx += text_w(mode_str) + pad_;
-    }
-
-    // ---- Shutter speed ----
+    // ---- Col 1: Shutter ----
     {
         std::string exp_str;
         if (state.exposure_us > 0.0f) {
@@ -423,150 +579,51 @@ void Osd::draw(const OsdState& state) {
         } else {
             exp_str = "---";
         }
-        bool shutter_manual = (state.exposure_mode == 2 || state.exposure_mode == 3);
-        draw_text(exp_str, cx, text_y, shutter_manual ? kWhite : kDim);
-        cx += text_w(exp_str) + pad_ * 2;
+        int x = col1 - tw(exp_str.c_str()) / 2;
+        draw_text(exp_str, x, text_y, kWhite);
     }
 
-    // ---- ISO ----
+    // ---- Col 2: AF / MF status ----
     {
-        std::string iso_val = (state.iso == 0) ? "AUTO" : std::to_string(state.iso);
-        bool iso_manual = (state.iso != 0);
-        draw_icon(icons_["gauge"], cx, icon_y, iso_manual ? 255 : 100);
-        cx += icon_sz_ + 4;
-        draw_text(iso_val, cx, text_y, iso_manual ? kWhite : kDim);
-        cx += text_w(iso_val) + pad_ * 2;
+        const char* af_lbl = state.af_enabled ? "AF" : "MF";
+        SDL_Color af_col   = state.af_enabled ? kWhite : kInactive;
+        int x = col2 - tw(af_lbl) / 2;
+        draw_text(af_lbl, x, text_y, af_col);
     }
 
-    // ---- Focus ----
+    // ---- Col 3: Aperture ----
     {
-        bool af = state.af_enabled || std::isnan(state.lens_position);
-        std::string focus_str;
-        if (af) {
-            focus_str = "AF";
-        } else {
+        std::string ap_str;
+        if (state.aperture > 0.0f) {
             std::ostringstream ss;
-            ss << "MF " << std::fixed << std::setprecision(2) << state.lens_position;
-            focus_str = ss.str();
+            ss << "f/" << std::fixed << std::setprecision(1) << state.aperture;
+            ap_str = ss.str();
+        } else {
+            ap_str = "f/--";
         }
-        draw_icon(icons_["crosshair"], cx, icon_y, af ? 255 : 100);
-        cx += icon_sz_ + 4;
-        draw_text(focus_str, cx, text_y, af ? kWhite : kDim);
-        cx += text_w(focus_str) + pad_ * 2;
+        int total = icon_sz_ + 4 + tw(ap_str.c_str());
+        int sx = col3 - total / 2;
+        draw_icon(icons_["aperture"], sx, icon_y);
+        draw_text(ap_str, sx + icon_sz_ + 4, text_y, kWhite);
     }
 
-    // ---- Stills count ----
+    // ---- Col 4: ISO ----
     {
-        char buf[16];
-        snprintf(buf, sizeof(buf), "%03d", state.still_count);
-        draw_icon(icons_["camera"], cx, icon_y);
-        cx += icon_sz_ + 4;
-        draw_text(buf, cx, text_y, kWhite);
-    }
-
-    // ---- Recording indicator (top-left corner) ----
-    if (state.recording) {
-        uint64_t ms    = now_ms() - state.record_start_ms;
-        uint64_t total_s = ms / 1000;
-        // Arc-seconds: 1/60 of a second. Divides evenly at 30fps and 60fps
-        // using only integer arithmetic (no floating-point rounding).
-        uint64_t arc_s = (ms % 1000) * 60 / 1000;  // 0–59
-        uint64_t s     = total_s % 60;
-        uint64_t m     = (total_s / 60) % 60;
-        uint64_t h     = total_s / 3600;
-
-        char ts[32];
-        snprintf(ts, sizeof(ts), "%02llu:%02llu:%02llu'%02llu",
-                 (unsigned long long)h,  (unsigned long long)m,
-                 (unsigned long long)s,  (unsigned long long)arc_s);
-
-        int dot_r  = bar_h_ / 4;
-        int dot_cx = pad_ + dot_r;
-        int dot_cy = pad_ + dot_r;
-
-        bool visible = (now_ms() / 500) % 2 == 0;
-        if (visible) {
-            SDL_SetRenderDrawColor(renderer_, 210, 30, 30, 255);
-            for (int dy = -dot_r; dy <= dot_r; ++dy)
-                for (int dx = -dot_r; dx <= dot_r; ++dx)
-                    if (dx * dx + dy * dy <= dot_r * dot_r)
-                        SDL_RenderDrawPoint(renderer_, dot_cx + dx, dot_cy + dy);
-        }
-        draw_text(std::string("REC ") + ts,
-                  dot_cx + dot_r + pad_, dot_cy - font_sz_ / 2, kRed);
-    }
-
-    // ---- Record hold progress arc ----
-    if (state.record_hold_progress > 0.0f) {
-        int dot_r  = bar_h_ / 4;
-        int dot_cx = pad_ + dot_r;
-        int dot_cy = pad_ + dot_r;
-        draw_record_arc(dot_cx, dot_cy, dot_r + 4, state.record_hold_progress);
-    }
-
-    // ---- Timelapse active indicator (top-left, same zone as REC but amber) ----
-    if (state.tl_active) {
-        uint64_t now   = now_ms();
-        int dot_r      = bar_h_ / 4;
-        int dot_cx     = pad_ + dot_r;
-        int dot_cy     = pad_ + dot_r;
-        SDL_Color kAmber = {230, 160, 0, 255};
-
-        // Countdown arc: progress = fraction of current interval already elapsed.
-        float arc_prog = 0.0f;
-        if (state.tl_interval_ms > 0) {
-            uint64_t elapsed_in_interval =
-                (now < state.tl_next_ms)
-                ? (state.tl_interval_ms - (state.tl_next_ms - now))
-                : state.tl_interval_ms;
-            arc_prog = std::min(1.0f,
-                (float)elapsed_in_interval / (float)state.tl_interval_ms);
-        }
-        draw_record_arc(dot_cx, dot_cy, dot_r + 4, arc_prog, kAmber);
-
-        // Small amber dot (always visible, no blink — distinct from REC blink)
-        SDL_SetRenderDrawColor(renderer_, 230, 160, 0, 255);
-        for (int dy = -dot_r; dy <= dot_r; ++dy)
-            for (int dx = -dot_r; dx <= dot_r; ++dx)
-                if (dx * dx + dy * dy <= dot_r * dot_r)
-                    SDL_RenderDrawPoint(renderer_, dot_cx + dx, dot_cy + dy);
-
-        // Frame count + countdown label
-        char count_buf[16];
-        snprintf(count_buf, sizeof(count_buf), "TL %03d", state.tl_count);
-
-        char cd_buf[24] = "";
-        if (state.tl_interval_ms > 0) {
-            uint64_t rem = (now < state.tl_next_ms) ? (state.tl_next_ms - now) : 0;
-            if (rem >= 60000) {
-                uint64_t m = rem / 60000;
-                uint64_t s = (rem % 60000) / 1000;
-                snprintf(cd_buf, sizeof(cd_buf), " \xe2\x86\x90%llum%02llus",
-                         (unsigned long long)m, (unsigned long long)s);
-            } else {
-                float sf = rem / 1000.0f;
-                snprintf(cd_buf, sizeof(cd_buf), " \xe2\x86\x90%.1fs", sf);
-            }
-        }
-
-        draw_text(std::string(count_buf) + cd_buf,
-                  dot_cx + dot_r + pad_, dot_cy - font_sz_ / 2, kAmber);
-    }
-
-    // ---- Timelapse hold progress arc ----
-    if (state.tl_hold_progress > 0.0f && !state.tl_active && !state.recording) {
-        int dot_r  = bar_h_ / 4;
-        int dot_cx = pad_ + dot_r;
-        int dot_cy = pad_ + dot_r;
-        SDL_Color kAmber = {230, 160, 0, 255};
-        draw_record_arc(dot_cx, dot_cy, dot_r + 4, state.tl_hold_progress, kAmber);
+        std::string iso_val = "ISO " + ((state.iso == 0) ? std::string("AUTO") : std::to_string(state.iso));
+        int total = icon_sz_ + 4 + tw(iso_val.c_str());
+        int sx = col4 - total / 2;
+        draw_icon(icons_["gauge"], sx, icon_y);
+        draw_text(iso_val, sx + icon_sz_ + 4, text_y, kWhite);
     }
 
     // ---- Quit hold warning (center screen, appears at 2.5 s) ----
     draw_quit_warning(state.quit_hold_progress);
 
-    // ---- Help overlay (center screen, visible while H held ≥ 3 s) ----
+    // ---- Help overlay ----
     if (state.show_help) draw_help_overlay();
+
+    // ---- Timelapse dialog ----
+    draw_tl_dialog(state);
 
     // ---- Camera mode list ----
     draw_mode_list(state.mode_list);

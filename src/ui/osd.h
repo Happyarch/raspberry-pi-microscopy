@@ -22,12 +22,22 @@ struct OsdState {
     bool     show_crosshair;       // whether to draw the center guide overlay
     bool     show_help;            // true while H has been held ≥ 3 s
 
+    // Camera resolution (set each frame from camera.width()/height())
+    int cam_width{0};
+    int cam_height{0};
+
     // Timelapse
     bool     tl_active{false};
     int      tl_count{0};
     uint64_t tl_next_ms{0};       // absolute time of next capture
     uint64_t tl_interval_ms{0};   // current I(n) — used to scale the progress arc
-    float    tl_hold_progress{0.0f}; // 0–1 while timelapse key held before trigger
+    float    tl_hold_progress{0.0f}; // 0–1 while T held during active timelapse (stop arc)
+
+    // Timelapse config dialog
+    bool        tl_dialog_open{false};
+    int         tl_dialog_field{0};          // 0=interval, 1=frames
+    std::string tl_dialog_interval{"5"};
+    std::string tl_dialog_frames{"0"};
 
     // Camera mode list overlay
     struct ModeList {
@@ -65,6 +75,8 @@ private:
     void draw_icon(SDL_Texture* tex, int x, int y, uint8_t alpha = 255);
     void draw_record_arc(int cx, int cy, int radius, float progress,
                          SDL_Color color = {255, 60, 60, 255});
+    void draw_top_bar(const OsdState& state);
+    void draw_tl_dialog(const OsdState& state);
     void draw_crosshair();
     void draw_quit_warning(float progress);
     void draw_help_overlay();

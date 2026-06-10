@@ -50,8 +50,8 @@ void InputHandler::build_bindings(const KeyMap& keys) {
     (void)vshift;
 
     auto [tlsym, tlshift] = parse_key_binding(keys.timelapse);
-    tl_sym_          = (tlsym != SDLK_UNKNOWN) ? tlsym : SDLK_l;
-    tl_needs_shift_  = tlshift;
+    tl_sym_         = (tlsym != SDLK_UNKNOWN) ? tlsym : SDLK_t;
+    tl_needs_shift_ = tlshift;
 
     add(keys.cam_mode, true, [&]{ if (cbs_.on_cam_mode_toggle) cbs_.on_cam_mode_toggle(); });
 }
@@ -71,6 +71,17 @@ bool InputHandler::process_events() {
     while (SDL_PollEvent(&ev)) {
         if (ev.type == SDL_QUIT)
             return false;
+
+        if (ev.type == SDL_TEXTINPUT && tl_dialog_open_) {
+            const char* t = ev.text.text;
+            for (int i = 0; t[i]; ++i) {
+                char c = t[i];
+                if ((c >= '0' && c <= '9') || c == '.') {
+                    if (cbs_.on_tl_dialog_char) cbs_.on_tl_dialog_char(c);
+                }
+            }
+            continue;
+        }
 
         if (ev.type == SDL_MOUSEWHEEL) {
             if (ev.wheel.y != 0) {
@@ -124,10 +135,32 @@ bool InputHandler::process_events() {
                 record_press_tick_ = SDL_GetTicks64();
             }
 
-            // ---- Timelapse hold start ----
+            // ---- Timelapse key ----
             if (sym == tl_sym_ && shift == tl_needs_shift_ && !ev.key.repeat) {
-                tl_held_       = true;
-                tl_press_tick_ = SDL_GetTicks64();
+                if (tl_dialog_open_) {
+                    // Dialog open: T key ignored (dialog routes its own input)
+                } else if (tl_active_) {
+                    // TL running: start stop-hold timer
+                    tl_held_       = true;
+                    tl_press_tick_ = SDL_GetTicks64();
+                } else {
+                    // TL idle: tap → open dialog
+                    if (cbs_.on_timelapse_tap) cbs_.on_timelapse_tap();
+                }
+            }
+
+            // ---- Dialog key routing ----
+            if (tl_dialog_open_ && !ev.key.repeat) {
+                if (sym == SDLK_BACKSPACE) {
+                    if (cbs_.on_tl_dialog_backspace) cbs_.on_tl_dialog_backspace();
+                } else if (sym == SDLK_TAB) {
+                    if (cbs_.on_tl_dialog_tab) cbs_.on_tl_dialog_tab();
+                } else if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
+                    if (cbs_.on_tl_dialog_confirm) cbs_.on_tl_dialog_confirm();
+                } else if (sym == SDLK_ESCAPE) {
+                    if (cbs_.on_tl_dialog_cancel) cbs_.on_tl_dialog_cancel();
+                }
+                continue;
             }
 
             // ---- Table-driven bindings ----
@@ -175,15 +208,10 @@ bool InputHandler::process_events() {
             if (sym == SDLK_LSHIFT || sym == SDLK_RSHIFT)
                 record_held_ = false;
 
-            // ---- Timelapse hold release ----
+            // ---- Timelapse stop-hold release ----
             if (tl_held_ && sym == tl_sym_) {
-                uint64_t held = SDL_GetTicks64() - tl_press_tick_;
-                if (held >= kRecordHoldMs && shift == tl_needs_shift_) {
-                    if (cbs_.on_timelapse_toggle) cbs_.on_timelapse_toggle();
-                }
-                tl_held_ = false;
+                tl_held_ = false;  // fired by poll loop if threshold met; reset on early release
             }
-            // Shift release cancels the timelapse hold (if bound to a shift key).
             if (tl_needs_shift_ && (sym == SDLK_LSHIFT || sym == SDLK_RSHIFT))
                 tl_held_ = false;
         }
@@ -195,6 +223,15 @@ bool InputHandler::process_events() {
         if (held >= kQuitHoldMs) {
             quit_held_ = false;
             if (cbs_.on_quit) cbs_.on_quit();
+        }
+    }
+
+    // Fire timelapse stop if T has been held long enough during active timelapse.
+    if (tl_held_ && tl_active_) {
+        uint64_t held = SDL_GetTicks64() - tl_press_tick_;
+        if (held >= kTlStopHoldMs) {
+            tl_held_ = false;
+            if (cbs_.on_timelapse_stop) cbs_.on_timelapse_stop();
         }
     }
 
@@ -222,7 +259,21 @@ bool InputHandler::help_visible() const {
 }
 
 float InputHandler::timelapse_hold_progress() const {
-    if (!tl_held_) return 0.0f;
+    if (!tl_held_ || !tl_active_) return 0.0f;
     uint64_t held = SDL_GetTicks64() - tl_press_tick_;
-    return std::min(1.0f, (float)held / kRecordHoldMs);
+    return std::min(1.0f, (float)held / kTlStopHoldMs);
+}
+
+void InputHandler::set_tl_dialog_open(bool open) {
+    if (open == tl_dialog_open_) return;
+    tl_dialog_open_ = open;
+    if (open)
+        SDL_StartTextInput();
+    else
+        SDL_StopTextInput();
+}
+
+void InputHandler::set_tl_active(bool active) {
+    tl_active_ = active;
+    if (!active) tl_held_ = false;
 }

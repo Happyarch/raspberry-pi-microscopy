@@ -18,9 +18,15 @@ struct InputCallbacks {
     std::function<void()>    on_focus_down;
     std::function<void()>    on_toggle_af;
     std::function<void()>    on_still;
-    std::function<void()>    on_record_toggle;   // fires after hold threshold
-    std::function<void()>    on_timelapse_toggle; // fires after hold threshold
-    std::function<void()>    on_toggle_crosshair;
+    std::function<void()>     on_record_toggle;      // fires after Shift+R hold threshold
+    std::function<void()>     on_timelapse_tap;      // T tapped while TL idle → open dialog
+    std::function<void()>     on_timelapse_stop;     // T held 3 s while TL active → stop
+    std::function<void(char)> on_tl_dialog_char;     // digit or '.' typed in dialog
+    std::function<void()>     on_tl_dialog_backspace;
+    std::function<void()>     on_tl_dialog_tab;      // switch active field
+    std::function<void()>     on_tl_dialog_confirm;  // Enter
+    std::function<void()>     on_tl_dialog_cancel;   // Esc
+    std::function<void()>     on_toggle_crosshair;
     std::function<void()>    on_quit;
 
     // Mouse scroll wheel: +1 = toward macro, -1 = toward infinity (per notch).
@@ -46,7 +52,7 @@ public:
     // 0.0–1.0 progress of current Shift+R hold (0 if not held).
     float record_hold_progress() const;
 
-    // 0.0–1.0 progress of current timelapse key hold (0 if not held).
+    // 0.0–1.0 progress of T hold while timelapse is active (stop arc).
     float timelapse_hold_progress() const;
 
     // 0.0–1.0 progress of current quit key hold (0 if not held).
@@ -58,6 +64,11 @@ public:
 
     // Switch the input handler between normal dispatch and mode-list navigation.
     void set_mode_list_open(bool open) { mode_list_open_ = open; }
+
+    // Tell the handler the current timelapse dialog and active states so it can
+    // route SDL_TEXTINPUT events and decide whether T is a tap or stop-hold.
+    void set_tl_dialog_open(bool open);
+    void set_tl_active(bool active);
 
 private:
     struct BoundKey {
@@ -78,11 +89,13 @@ private:
     SDL_Keycode record_sym_{SDLK_r};
     bool        record_needs_shift_{true};
 
-    // Timelapse hold
+    // Timelapse stop-hold
     bool        tl_held_{false};
     uint64_t    tl_press_tick_{0};
-    SDL_Keycode tl_sym_{SDLK_l};
+    SDL_Keycode tl_sym_{SDLK_t};
     bool        tl_needs_shift_{false};
+    bool        tl_dialog_open_{false};  // dialog open — route SDL_TEXTINPUT to dialog
+    bool        tl_active_{false};       // TL running — T hold starts stop-hold timer
 
     // Quit hold — tracks whichever quit key was pressed first
     bool        quit_held_{false};
@@ -98,7 +111,8 @@ private:
     bool        mode_list_open_{false};
     SDL_Keycode cam_mode_sym_{SDLK_v};
 
-    static constexpr uint64_t kRecordHoldMs = 500;
+    static constexpr uint64_t kRecordHoldMs  =  500;
+    static constexpr uint64_t kTlStopHoldMs = 3000;
     static constexpr uint64_t kQuitHoldMs   = 5000;
     static constexpr uint64_t kHelpShowMs   = 4000;  // auto-dismiss after 4 s
 };

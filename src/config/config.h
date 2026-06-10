@@ -18,7 +18,7 @@ struct KeyMap {
     std::string focus_down      = "down";
     std::string aperture_up     = "right";
     std::string aperture_down   = "left";
-    std::string toggle_af       = "shift+a";
+    std::string toggle_af       = "f";
     std::string still           = "space";
     std::string record          = "shift+r";
     std::string crosshair       = "x";
@@ -50,9 +50,10 @@ struct Config {
     std::string capture_format{"jpeg"};  // "jpeg", "raw", or "jpeg+raw"
 
     // [display]
-    int  fallback_width;
-    int  fallback_height;
-    bool show_crosshair;        // guide overlay visible at startup
+    int         fallback_width;
+    int         fallback_height;
+    bool        show_crosshair;        // guide overlay visible at startup
+    std::string viewfinder_ar{"16:9"}; // "16:9" | "16:10" | "4:3"
 
     // [remote]
     std::string socket_path{"/run/microscopi/microscopi.sock"};

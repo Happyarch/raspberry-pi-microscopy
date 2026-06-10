@@ -82,6 +82,16 @@ static std::string timestamp_filename(const std::string& ext) {
 // main
 // ---------------------------------------------------------------------------
 
+// Known fixed apertures for official Raspberry Pi camera modules.
+// Returns 0 if the sensor has an interchangeable lens (HQ, Global Shutter).
+static float pi_camera_aperture(const std::string& model) {
+    if (model == "ov5647")      return 2.9f;  // Camera Module 1
+    if (model == "imx219")      return 2.0f;  // Camera Module 2
+    if (model == "imx708")      return 1.8f;  // Camera Module 3
+    if (model == "imx708_wide") return 2.2f;  // Camera Module 3 Wide
+    return 0.0f;                              // imx477 (HQ), imx296 (GS) — interchangeable
+}
+
 int main() {
     std::signal(SIGHUP,  handle_sighup);
     std::signal(SIGTERM, handle_sigterm);
@@ -101,7 +111,8 @@ int main() {
                   << " — running headless (MJPEG + socket control only)\n";
         headless = true;
     } else {
-        Resolution res = select_best_resolution(0, {cfg.fallback_width, cfg.fallback_height});
+        Resolution res = select_best_resolution(0, {cfg.fallback_width, cfg.fallback_height},
+                                                cfg.viewfinder_ar);
         rw = res.width;
         rh = res.height;
     }
@@ -118,7 +129,11 @@ int main() {
 
         renderer = std::make_unique<Renderer>(rw, rh);
         renderer->set_crop(cfg.crop_top, cfg.crop_bottom, cfg.crop_left, cfg.crop_right);
-        osd      = std::make_unique<Osd>(renderer->sdl_renderer(), rw, rh,
+        // Use the renderer's actual output dimensions (SDL_GetRendererOutputSize), not
+        // rw/rh from select_best_resolution. With FULLSCREEN_DESKTOP the window adopts the
+        // display's native mode, which can differ from the camera/selection resolution.
+        osd      = std::make_unique<Osd>(renderer->sdl_renderer(),
+                                         renderer->width(), renderer->height(),
                                          icons_dir, font_path, cache_dir, cfg.keys);
     }
 
@@ -127,6 +142,11 @@ int main() {
         std::cerr << "Failed to start camera\n";
         return 1;
     }
+    // Resize texture to actual camera output — libcamera may snap to a
+    // different resolution than the display (e.g. viewfinder fixed at 1080p
+    // on a 1200p display).  Without this, SDL_UpdateYUVTexture reads past the
+    // end of the camera buffer and corrupts/crashes.
+    if (renderer) renderer->update_texture_size(camera.width(), camera.height());
 
     Encoder encoder(cfg.video_backend,
                     rw, rh, cfg.fps,
@@ -187,6 +207,10 @@ int main() {
     int        still_count    = 0;
 
     // Timelapse state
+    bool        tl_dialog_open      = false;
+    std::string tl_dialog_interval  = "5";
+    std::string tl_dialog_frames    = "0";
+    int         tl_dialog_field     = 0;
     bool        tl_active           = false;
     uint64_t    tl_start_mono       = 0;    // now_ms() at session start
     uint64_t    tl_next_ms          = 0;    // absolute time of next capture
@@ -206,8 +230,10 @@ int main() {
     float        shutter_us   = 16667.0f;
     int          shutter_step = shutter_index(shutter_us, shutter_ladder);
     int          iso          = 0;
-    int          iso_step     = 0;
+    int          iso_step     = -1;  // -1 = AUTO; 0..N-1 = index into iso_ladder
     float        aperture_fs  = cfg.initial_aperture;
+    if (aperture_fs <= 0.0f)
+        aperture_fs = pi_camera_aperture(camera.model_name());
     int          aperture_step = aperture_ladder.empty() ? 0
                                : aperture_index(aperture_fs, aperture_ladder);
 
@@ -322,7 +348,7 @@ int main() {
         iso_ladder      = make_iso_ladder();
         aperture_ladder = make_aperture_ladder();
         shutter_step  = shutter_index(shutter_us, shutter_ladder);
-        iso_step      = iso == 0 ? 0 : iso_index(iso, iso_ladder);
+        iso_step      = iso == 0 ? -1 : iso_index(iso, iso_ladder);
         aperture_step = aperture_ladder.empty() ? 0
                       : aperture_index(aperture_fs, aperture_ladder);
     };
@@ -389,24 +415,30 @@ int main() {
     };
 
     cbs.on_iso_up = [&]{
-        if (iso == 0) {
-            CameraStatus st = camera.get_status();
-            iso_step = (st.iso > 0) ? iso_index(st.iso, iso_ladder) : 0;
+        if (iso_ladder.empty()) return;
+        if (iso_step >= (int)iso_ladder.size() - 1) {
+            iso_step = -1;   // wrap: max ISO → AUTO
+            iso = 0;
         } else {
-            iso_step = std::min((int)iso_ladder.size() - 1, iso_step + 1);
+            ++iso_step;
+            iso = iso_ladder[iso_step];
+            camera.set_iso(iso);
         }
-        iso = iso_ladder[iso_step];
-        camera.set_iso(iso);
     };
     cbs.on_iso_down = [&]{
-        if (iso == 0) {
-            CameraStatus st = camera.get_status();
-            iso_step = (st.iso > 0) ? iso_index(st.iso, iso_ladder) : 0;
+        if (iso_ladder.empty()) return;
+        if (iso_step < 0) {
+            iso_step = (int)iso_ladder.size() - 1;  // wrap: AUTO → max ISO
+            iso = iso_ladder[iso_step];
+            camera.set_iso(iso);
+        } else if (iso_step == 0) {
+            iso_step = -1;   // min ISO → AUTO
+            iso = 0;
         } else {
-            iso_step = std::max(0, iso_step - 1);
+            --iso_step;
+            iso = iso_ladder[iso_step];
+            camera.set_iso(iso);
         }
-        iso = iso_ladder[iso_step];
-        camera.set_iso(iso);
     };
 
     cbs.on_toggle_af = [&]{
@@ -488,22 +520,48 @@ int main() {
         }
     };
 
-    cbs.on_timelapse_toggle = [&]{
-        if (tl_active) {
-            stop_timelapse();
-        } else {
-            if (recording) return; // mutual exclusion
-            TlParams params;
-            params.base_ms    = cfg.tl_base_ms;
-            params.k          = cfg.tl_rate_constant;
-            params.power      = cfg.tl_power;
-            params.beta       = cfg.tl_beta;
-            params.inflection = cfg.tl_inflection;
-            params.floor_ms   = cfg.tl_floor_ms;
-            params.ceil_ms    = cfg.tl_ceil_ms;
-            TlFn fn = parse_tl_fn(cfg.tl_fn, params);
-            start_timelapse(fn, params, cfg.tl_max_frames);
-        }
+    cbs.on_timelapse_tap = [&]{
+        if (!recording && !tl_active) tl_dialog_open = true;
+    };
+    cbs.on_timelapse_stop = [&]{
+        if (tl_active) stop_timelapse();
+    };
+    cbs.on_tl_dialog_char = [&](char c) {
+        auto& s = (tl_dialog_field == 0) ? tl_dialog_interval : tl_dialog_frames;
+        if (s.size() < 6) s += c;
+    };
+    cbs.on_tl_dialog_backspace = [&]{
+        auto& s = (tl_dialog_field == 0) ? tl_dialog_interval : tl_dialog_frames;
+        if (!s.empty()) s.pop_back();
+    };
+    cbs.on_tl_dialog_tab = [&]{ tl_dialog_field ^= 1; };
+    cbs.on_tl_dialog_confirm = [&]{
+        double iv_s = 0.5;
+        try {
+            if (!tl_dialog_interval.empty())
+                iv_s = std::max(0.5, std::stod(tl_dialog_interval));
+        } catch (...) {}
+        int max_f = 0;
+        try {
+            if (!tl_dialog_frames.empty())
+                max_f = std::stoi(tl_dialog_frames);
+        } catch (...) {}
+        TlParams params;
+        params.base_ms    = static_cast<uint64_t>(iv_s * 1000);
+        params.k          = cfg.tl_rate_constant;
+        params.power      = cfg.tl_power;
+        params.beta       = cfg.tl_beta;
+        params.inflection = cfg.tl_inflection;
+        params.floor_ms   = cfg.tl_floor_ms;
+        params.ceil_ms    = cfg.tl_ceil_ms;
+        TlFn fn = parse_tl_fn(cfg.tl_fn, params);
+        start_timelapse(fn, params, max_f);
+        tl_dialog_open = false;
+        tl_dialog_field = 0;
+    };
+    cbs.on_tl_dialog_cancel = [&]{
+        tl_dialog_open = false;
+        tl_dialog_field = 0;
     };
 
     // InputHandler only exists when SDL is available
@@ -514,6 +572,16 @@ int main() {
 
     // ---- Socket + MJPEG command dispatch ----
     static const char* kModeNames[] = {"P", "A", "S", "M"};
+
+    // Returns 1 (true), 0 (false), or -1 (invalid) for bool socket args.
+    // Accepts: true/false, 1/0, on/off, yes/no (case-insensitive).
+    auto parse_bool = [](const std::string& s) -> int {
+        std::string lo = s;
+        for (auto& c : lo) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (lo == "true"  || lo == "1" || lo == "on"  || lo == "yes") return 1;
+        if (lo == "false" || lo == "0" || lo == "off" || lo == "no")  return 0;
+        return -1;
+    };
 
     auto dispatch_cmd = [&](const std::string& line) -> std::string {
         std::istringstream ss(line);
@@ -529,7 +597,7 @@ int main() {
         if (verb == "help")
             return "OK ping status still record_start record_stop "
                    "focus(<pos>|up|down) iso(<val>|auto) shutter(<us>) "
-                   "mode(p|a|s|m) af(on|off) ae(on|off) crosshair(on|off) quit";
+                   "mode(p|a|s|m) af(<bool>) crosshair(<bool>) timelapse(start|stop|status) quit";
 
         if (verb == "status") {
             CameraStatus st = camera.get_status();
@@ -592,12 +660,19 @@ int main() {
 
         if (verb == "iso") {
             if (args.size() < 2) return "ERR usage: iso <value>|auto";
-            if (args[1] == "auto") {
-                iso = 0; iso_step = 0;
+            std::string iso_arg = args[1];
+            // case-insensitive "auto"
+            for (auto& ch : iso_arg) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            if (iso_arg == "auto") {
+                iso = 0; iso_step = -1;
             } else {
                 try {
-                    int v = std::stoi(args[1]);
-                    iso_step = iso_index(v, iso_ladder);
+                    size_t pos = 0;
+                    long v = std::stol(args[1], &pos);
+                    if (pos != args[1].size()) return "ERR invalid iso value";  // reject "1.5", "1x", etc.
+                    if (v <= 0)     return "ERR iso must be a positive integer";
+                    if (v > 102400) return "ERR iso value out of range (max 102400)";
+                    iso_step = iso_index((int)v, iso_ladder);
                     iso = iso_ladder[iso_step];
                     camera.set_iso(iso);
                 } catch (...) { return "ERR invalid iso value"; }
@@ -608,16 +683,22 @@ int main() {
         if (verb == "shutter") {
             if (args.size() < 2) return "ERR usage: shutter <microseconds>";
             try {
-                float v = std::stof(args[1]);
-                shutter_us   = v;
-                shutter_step = shutter_index(v, shutter_ladder);
-                camera.set_shutter_speed(v);
+                size_t pos = 0;
+                long v = std::stol(args[1], &pos);
+                if (pos != args[1].size()) return "ERR invalid value";   // reject "1.5", "1x", etc.
+                if (v <= 0)       return "ERR shutter must be positive (µs)";
+                if (v > 2000000)  return "ERR shutter exceeds maximum (2000000 µs = 2 s)";
+                shutter_us   = static_cast<float>(v);
+                shutter_step = shutter_index(shutter_us, shutter_ladder);
+                camera.set_shutter_speed(shutter_us);
             } catch (...) { return "ERR invalid value"; }
             return "OK";
         }
 
         if (verb == "mode") {
             if (args.size() < 2) return "ERR usage: mode p|a|s|m";
+            if (args.size() > 2) return "ERR usage: mode p|a|s|m";
+            if (args[1].size() != 1) return "ERR unknown mode — use p a s m";
             char c = static_cast<char>(std::tolower(static_cast<unsigned char>(args[1][0])));
             int idx = (c == 'p') ? 0 : (c == 'a') ? 1 : (c == 's') ? 2 : (c == 'm') ? 3 : -1;
             if (idx < 0) return "ERR unknown mode — use p a s m";
@@ -626,21 +707,19 @@ int main() {
         }
 
         if (verb == "af") {
-            if (args.size() < 2) return "ERR usage: af on|off";
-            af_enabled = (args[1] == "on");
+            if (args.size() < 2) return "ERR usage: af <true|false>";
+            int b = parse_bool(args[1]);
+            if (b < 0) return "ERR usage: af <true|false>";
+            af_enabled = (b == 1);
             camera.set_af_enable(af_enabled);
             return "OK";
         }
 
-        if (verb == "ae") {
-            if (args.size() < 2) return "ERR usage: ae on|off";
-            camera.set_ae_enable(args[1] == "on");
-            return "OK";
-        }
-
         if (verb == "crosshair") {
-            if (args.size() < 2) return "ERR usage: crosshair on|off";
-            show_crosshair = (args[1] == "on");
+            if (args.size() < 2) return "ERR usage: crosshair <true|false>";
+            int b = parse_bool(args[1]);
+            if (b < 0) return "ERR usage: crosshair <true|false>";
+            show_crosshair = (b == 1);
             return "OK";
         }
 
@@ -701,17 +780,41 @@ int main() {
                     std::string k = args[i].substr(0, eq);
                     std::string v = args[i].substr(eq + 1);
                     try {
-                        if      (k == "base")       params.base_ms    = (uint64_t)std::stoull(v);
-                        else if (k == "fn")         fn_name           = v;
-                        else if (k == "k")          params.k          = std::stof(v);
-                        else if (k == "power")      params.power      = std::stof(v);
-                        else if (k == "beta")       params.beta       = std::stof(v);
-                        else if (k == "inflection") params.inflection = std::stoi(v);
-                        else if (k == "floor")      params.floor_ms   = (uint64_t)std::stoull(v);
-                        else if (k == "ceil")       params.ceil_ms    = (uint64_t)std::stoull(v);
-                        else if (k == "max")        max_frames        = std::stoi(v);
+                        if (k == "base") {
+                            long lv = std::stol(v);
+                            if (lv < 100) return "ERR base must be >= 100 ms";
+                            params.base_ms = static_cast<uint64_t>(lv);
+                        } else if (k == "fn") {
+                            fn_name = v;
+                        } else if (k == "k") {
+                            params.k = std::stof(v);
+                        } else if (k == "power") {
+                            params.power = std::stof(v);
+                        } else if (k == "beta") {
+                            params.beta = std::stof(v);
+                        } else if (k == "inflection") {
+                            params.inflection = std::stoi(v);
+                        } else if (k == "floor") {
+                            params.floor_ms = (uint64_t)std::stoull(v);
+                        } else if (k == "ceil") {
+                            params.ceil_ms = (uint64_t)std::stoull(v);
+                        } else if (k == "max") {
+                            max_frames = std::stoi(v);
+                        } else {
+                            return "ERR unknown parameter: " + k;
+                        }
                     } catch (...) { return "ERR invalid value for " + k; }
                 }
+
+                // Validate fn name before starting
+                static const char* kValidFns[] = {
+                    "linear","exp_grow","exp_decay","log","power",
+                    "quadratic","cubic","quintic","michaelis",
+                    "logistic","stretched_exp","hyperbolic"
+                };
+                bool fn_valid = false;
+                for (const char* n : kValidFns) if (fn_name == n) { fn_valid = true; break; }
+                if (!fn_valid) return "ERR unknown timelapse function: " + fn_name;
 
                 TlFn fn = parse_tl_fn(fn_name, params);
                 if (!start_timelapse(fn, params, max_frames)) return "ERR start failed";
@@ -766,6 +869,8 @@ int main() {
         // ---- SDL input (headed only) ----
         if (input) {
             input->set_mode_list_open(cam_mode_open);
+            input->set_tl_dialog_open(tl_dialog_open);
+            input->set_tl_active(tl_active);
             if (!input->process_events()) break;
         }
 
@@ -779,6 +884,7 @@ int main() {
             camera.stop();
             std::this_thread::sleep_for(std::chrono::seconds(2));
             if (camera.reconnect() && camera.start(rw, rh, cfg.fps)) {
+                if (renderer) renderer->update_texture_size(camera.width(), camera.height());
                 rebuild_ladders();
                 cam_mode_active = find_active_mode();
                 std::cerr << "[camera] reconnected\n";
@@ -838,10 +944,16 @@ int main() {
         osd_state.show_crosshair    = show_crosshair;
         osd_state.mode_list         = {cam_mode_open, cam_mode_selected,
                                        cam_mode_active, &cam_mode_labels};
-        osd_state.tl_active      = tl_active;
-        osd_state.tl_count       = tl_count;
-        osd_state.tl_next_ms     = tl_next_ms;
-        osd_state.tl_interval_ms = tl_interval_ms;
+        osd_state.cam_width          = camera.width();
+        osd_state.cam_height         = camera.height();
+        osd_state.tl_active          = tl_active;
+        osd_state.tl_count           = tl_count;
+        osd_state.tl_next_ms         = tl_next_ms;
+        osd_state.tl_interval_ms     = tl_interval_ms;
+        osd_state.tl_dialog_open     = tl_dialog_open;
+        osd_state.tl_dialog_field    = tl_dialog_field;
+        osd_state.tl_dialog_interval = tl_dialog_interval;
+        osd_state.tl_dialog_frames   = tl_dialog_frames;
         if (input) {
             osd_state.record_hold_progress = input->record_hold_progress();
             osd_state.quit_hold_progress   = input->quit_hold_progress();

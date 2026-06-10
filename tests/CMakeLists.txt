@@ -95,3 +95,27 @@ add_executable(test_timelapse
 target_include_directories(test_timelapse PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_timelapse PRIVATE GTest::gtest_main)
 add_test(NAME timelapse COMMAND test_timelapse)
+
+# ---------------------------------------------------------------------------
+# test_resolution — aspect_str and select_from_modes (SDL2 for resolution.cpp)
+# ---------------------------------------------------------------------------
+add_executable(test_resolution
+    test_resolution.cpp
+    ${CMAKE_SOURCE_DIR}/src/util/resolution.cpp
+)
+target_include_directories(test_resolution PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${SDL2_INCLUDE_DIRS}
+)
+target_link_libraries(test_resolution PRIVATE GTest::gtest_main ${SDL2_LIBRARIES})
+add_test(NAME resolution COMMAND test_resolution)
+
+# ---------------------------------------------------------------------------
+# test_tl_dialog — timelapse dialog callback state machine (no deps)
+# ---------------------------------------------------------------------------
+add_executable(test_tl_dialog
+    test_tl_dialog.cpp
+)
+target_include_directories(test_tl_dialog PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_tl_dialog PRIVATE GTest::gtest_main)
+add_test(NAME tl_dialog COMMAND test_tl_dialog)

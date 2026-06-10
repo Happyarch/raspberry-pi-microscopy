@@ -126,6 +126,7 @@ Config load_config(const std::string& path) {
             if      (key == "fallback_width")   c.fallback_width  = parse_int (key, val, c.fallback_width);
             else if (key == "fallback_height")  c.fallback_height = parse_int (key, val, c.fallback_height);
             else if (key == "show_crosshair")   c.show_crosshair  = parse_bool(key, val, c.show_crosshair);
+            else if (key == "viewfinder_ar")    c.viewfinder_ar   = val;
         } else if (section == "remote") {
             if (key == "socket_path") c.socket_path = val;
         } else if (section == "stream") {
@@ -261,6 +262,11 @@ fallback_height = 720
 # Toggle at runtime with the 'c' key.
 show_crosshair = false
 
+# Aspect ratio used when selecting the viewfinder resolution from the display's
+# advertised EDID modes. The best matching mode up to 1920 wide and at least 480
+# tall is chosen. Supported values: 16:9 (default), 16:10, 4:3.
+viewfinder_ar = 16:9
+
 [keys]
 # Key bindings. Use lowercase key names: letters (a-z), digits (0-9),
 # or names: up, down, left, right, space, escape, return, tab.
@@ -280,7 +286,7 @@ focus_up        = up
 focus_down      = down
 aperture_up     = right
 aperture_down   = left
-toggle_af       = shift+a
+toggle_af       = f
 still           = space
 record          = shift+r
 timelapse       = t
