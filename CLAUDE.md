@@ -13,16 +13,36 @@ A minimal Raspberry Pi 3 OS image and C++ camera application for microscopy. The
 - **SDL2_ttf** — OSD text (Roboto Condensed variable font)
 
 ## Build
+
+Host prerequisites: `docker`, `qemu-user-static`, `binfmt-qemu-static` (Arch Linux).
+
 ```bash
-# Build binary inside ARM64 Docker container (QEMU-emulated on x86_64 host):
+# 1. Build binary inside ARM64 Docker container (QEMU-emulated on x86_64 host).
+#    Output: deploy/install/usr/local/
 ./scripts/build-app.sh
-# Then build the full Pi OS image:
+
+# 2a. Package as a .deb for direct installation on a Pi running Pi OS Bookworm.
+#     Output: deploy/microscopi_<version>_arm64.deb
+#     Requires only: ar, tar, gzip — no dpkg needed on the host.
+./scripts/build-deb.sh
+
+# 2b. OR build a full Pi OS image (includes pi-gen; much slower).
+#     Output: deploy/pi-gen/deploy/*.img.xz
 ./scripts/build-image.sh
-# Flash to SD:
+
+# Flash image to SD (image build path only):
 ./scripts/flash.sh /dev/sdX
 ```
 
-Host prerequisites: `docker`, `qemu-user-static`, `binfmt-qemu-static` (Arch Linux).
+### .deb vs full image
+- **`.deb`** — install/upgrade the app on an existing Pi OS Bookworm system: `sudo dpkg -i microscopi_*_arm64.deb`. Fast iteration path.
+- **Full image** — complete bespoke OS built with pi-gen; used for shipping SD cards. Slow (pi-gen clones and debootstraps from scratch).
+
+The `.deb` postinst creates the `microscopi` user, output dirs, and enables the systemd service on first install. The full image does the same via `config/pi-gen/stage3/01-microscopi/00-run.sh`.
+
+### .deb runtime dependencies
+Derived from `readelf -d` on the compiled binary — update if linking changes:
+`libcamera0.5`, `libcamera-base0.5`, `libcamera-ipa`, `libsdl2-2.0-0`, `libsdl2-ttf-2.0-0`, `libsdl2-image-2.0-0`, `libavformat59`, `libavcodec59`, `libturbojpeg0`, `libssl3`, `libstdc++6`, `libgcc-s1`, `libc6`, `librsvg2-bin`, `v4l-utils`
 
 For clangd LSP: `cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && ln -sf build/compile_commands.json compile_commands.json`
 
