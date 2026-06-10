@@ -2,8 +2,8 @@
 # Build a .deb package from the artifacts already in deploy/install/.
 # Run scripts/build-app.sh first to populate deploy/install/.
 #
-# dpkg-deb is sourced from tools/bin/ (project-local, not system-installed).
-# To refresh it: scripts/bootstrap-tools.sh
+# Requires only: ar (binutils), tar, gzip — present on any Linux host.
+# No dpkg installation needed; the .deb format is assembled directly.
 #
 # Output: deploy/microscopi_<version>_arm64.deb
 set -euo pipefail
@@ -13,16 +13,10 @@ DEPLOY_DIR="$REPO_ROOT/deploy"
 INSTALL_DIR="$DEPLOY_DIR/install"
 FILES_DIR="$REPO_ROOT/config/pi-gen/stage3/01-microscopi/files"
 
-# Prefer the project-local dpkg-deb; fall back to whatever is on PATH.
-DPKG_DEB="$REPO_ROOT/tools/bin/dpkg-deb"
-if [[ ! -x "$DPKG_DEB" ]]; then
-    DPKG_DEB=$(command -v dpkg-deb 2>/dev/null || true)
-fi
-[[ -x "$DPKG_DEB" ]] || {
-    echo "ERROR: dpkg-deb not found."
-    echo "  Run: ./scripts/bootstrap-tools.sh"
-    exit 1
-}
+# --- Sanity checks ---
+for tool in ar tar gzip; do
+    command -v "$tool" >/dev/null 2>&1 || { echo "ERROR: $tool not found (install binutils/coreutils)"; exit 1; }
+done
 
 [[ -x "$INSTALL_DIR/usr/local/bin/microscopi" ]] || {
     echo "ERROR: $INSTALL_DIR/usr/local/bin/microscopi not found."
@@ -59,7 +53,7 @@ install -d "$STAGING/usr/local/share/microscopi/fonts"
 cp "$INSTALL_DIR/usr/local/share/microscopi/fonts/"*.ttf \
    "$STAGING/usr/local/share/microscopi/fonts/"
 
-# Default config (installed as a conffile so dpkg preserves local edits on upgrade)
+# Default config (conffile: dpkg preserves local edits on upgrade)
 install -D -m 644 "$INSTALL_DIR/usr/local/etc/microscopi.conf" \
                   "$STAGING/etc/microscopi.conf"
 
@@ -97,37 +91,25 @@ Depends: libcamera0.5,
          v4l-utils
 EOF
 
-# List of files dpkg treats as user-editable configs.
-# dpkg will ask before overwriting these on upgrade if they were modified.
 cat > "$STAGING/DEBIAN/conffiles" << 'EOF'
 /etc/microscopi.conf
 EOF
 
-# postinst: run after package files are installed
 cat > "$STAGING/DEBIAN/postinst" << 'POSTINST'
 #!/bin/bash
 set -e
 case "$1" in
     configure)
-        # Create the dedicated system user if it doesn't exist.
         if ! id microscopi &>/dev/null; then
             useradd -r -m -d /home/microscopi -s /bin/bash microscopi
         fi
-
-        # Ensure membership in all required groups (best-effort; groups may
-        # not exist on non-Pi systems but the package must still install).
         for g in video render audio input dialout; do
             getent group "$g" >/dev/null 2>&1 && usermod -aG "$g" microscopi || true
         done
-
-        # Create output directories owned by microscopi.
         mkdir -p /home/microscopi/videos \
                  /home/microscopi/stills \
                  /home/microscopi/.cache/microscopi
         chown -R microscopi:microscopi /home/microscopi
-
-        # Enable the service. Only start it immediately if systemd is running
-        # (it won't be during chroot installs, e.g. pi-gen or debootstrap).
         systemctl daemon-reload || true
         systemctl enable microscopi.service || true
         if systemctl is-system-running 2>/dev/null | grep -qE '^(running|degraded)$'; then
@@ -138,20 +120,18 @@ esac
 POSTINST
 chmod 755 "$STAGING/DEBIAN/postinst"
 
-# prerm: stop the service before files are removed
 cat > "$STAGING/DEBIAN/prerm" << 'PRERM'
 #!/bin/bash
 set -e
 case "$1" in
     remove|upgrade|deconfigure)
-        systemctl stop microscopi.service  2>/dev/null || true
+        systemctl stop microscopi.service    2>/dev/null || true
         systemctl disable microscopi.service 2>/dev/null || true
         ;;
 esac
 PRERM
 chmod 755 "$STAGING/DEBIAN/prerm"
 
-# postrm: clean up after the package files are gone
 cat > "$STAGING/DEBIAN/postrm" << 'POSTRM'
 #!/bin/bash
 set -e
@@ -161,23 +141,48 @@ case "$1" in
         ;;
     purge)
         systemctl daemon-reload || true
-        # Remove assets not tracked as conffiles.
         rm -rf /usr/local/share/microscopi
-        # Leave /home/microscopi and /etc/microscopi.conf to dpkg's conffile
-        # handling; dpkg purge removes conffiles automatically.
         ;;
 esac
 POSTRM
 chmod 755 "$STAGING/DEBIAN/postrm"
 
-# --- Build ---
-# --root-owner-group: sets uid/gid to 0:0 (root:root) in the archive,
-# regardless of who owns the staging files on the host.
-"$DPKG_DEB" --root-owner-group --build "$STAGING" "$DEPLOY_DIR/$DEB_FILENAME"
+# ---------------------------------------------------------------------------
+# Assemble the .deb
+#
+# A .deb is an ar(1) archive with exactly three members in this order:
+#   debian-binary   — format version ("2.0\n")
+#   control.tar.gz  — DEBIAN/ metadata (control, conffiles, maintainer scripts)
+#   data.tar.gz     — the installed file tree
+#
+# GNU tar's --owner/--group pins uid:gid to 0:0 so the archive is clean
+# regardless of who runs this script.
+# ---------------------------------------------------------------------------
+WORK=$(mktemp -d)
+trap 'rm -rf "$STAGING" "$WORK"' EXIT
+
+printf '2.0\n' > "$WORK/debian-binary"
+
+tar -czf "$WORK/control.tar.gz" \
+    --owner=0 --group=0 \
+    -C "$STAGING/DEBIAN" .
+
+tar -czf "$WORK/data.tar.gz" \
+    --owner=0 --group=0 \
+    -C "$STAGING" \
+    --exclude="./DEBIAN" \
+    .
+
+mkdir -p "$DEPLOY_DIR"
+OUTPUT="$DEPLOY_DIR/$DEB_FILENAME"
+rm -f "$OUTPUT"
+
+# ar -D: deterministic mode (no timestamps/uids in ar headers)
+(cd "$WORK" && ar -rcD "$OUTPUT" debian-binary control.tar.gz data.tar.gz)
 
 echo "==> Done."
-echo "    Package: $DEPLOY_DIR/$DEB_FILENAME"
+echo "    Package: $OUTPUT"
 echo ""
 echo "    Install on Pi:"
-echo "      scp $DEPLOY_DIR/$DEB_FILENAME microscopi@192.168.1.220:~/"
+echo "      scp \"$OUTPUT\" microscopi@192.168.1.220:~/"
 echo "      ssh microscopi@192.168.1.220 'sudo dpkg -i ~/$DEB_FILENAME'"
