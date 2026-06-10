@@ -94,12 +94,32 @@ ISO is cyclic. Steps snap to standard values: 100, 125, 160, 200, 250, 320, 400,
 
 ---
 
+### Camera Sensor Mode
+
+| Key | Action |
+|-----|--------|
+| `V` | Open / close the sensor mode picker |
+| `↑` / `↓` (while picker open) | Navigate between modes |
+| `Enter` or `Space` (while picker open) | Apply selected mode |
+| `Esc` or `V` (while picker open) | Close without changing |
+
+**What this is:** libcamera hardware (sensor) modes are distinct readout configurations baked into the camera firmware — not to be confused with the **exposure modes P/A/S/M**, which control how shutter and gain are set. Sensor modes trade resolution, framerate, and field of view against each other. A typical Pi Camera Module 3 offers modes like:
+
+- **2304×1296 @ 56 fps** — cropped, high frame rate (sports / microscopy motion)
+- **2304×1296 @ 30 fps** — same crop, moderate frame rate
+- **4608×2592 @ 14 fps** — full-sensor, slow (timelapse, high-detail stills)
+
+A different camera may offer different modes. The currently-active mode is marked `*` in the picker; the highlighted selection is marked `>`. Changing mode restarts the camera stream — shutter ladders, ISO ranges, and focus position are re-applied to the new mode.
+
+Mouse scroll is **not** captured by the picker — it continues to adjust focus.
+
+---
+
 ### UI Controls
 
 | Key | Action |
 |-----|--------|
 | `X` | Toggle center guide overlay (circle + crosshair) |
-| `V` | Open / close camera resolution list |
 | `H` | Show key binding overlay (auto-dismisses after 4 s; press again to close early) |
 | `Esc` or `Q` (hold ≥ 5 s) | Quit (warning text appears after 2.5 s) |
 
