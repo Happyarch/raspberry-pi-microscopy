@@ -23,11 +23,23 @@ docker buildx build \
     "$REPO_ROOT"
 
 echo "==> Extracting build artifacts..."
+CONTAINER=$(docker create --platform linux/arm64 "$IMAGE_TAG")
+
+# Raw install tree — consumed by build-image.sh when building the full Pi OS image.
 rm -rf "$DEPLOY_DIR/install"
 mkdir -p "$DEPLOY_DIR/install/usr/local"
-CONTAINER=$(docker create --platform linux/arm64 "$IMAGE_TAG")
-docker cp "$CONTAINER:/usr/local/." "$DEPLOY_DIR/install/usr/local/"
+docker cp "$CONTAINER:/install/usr/local/." "$DEPLOY_DIR/install/usr/local/"
+
+# .deb package — install directly on a Pi running Pi OS Bookworm.
+docker cp "$CONTAINER:/output/." "$DEPLOY_DIR/"
+
 docker rm "$CONTAINER"
 
-echo "==> Done. Artifacts in $DEPLOY_DIR/install/usr/local/"
-echo "    Binary: $DEPLOY_DIR/install/usr/local/bin/microscopi"
+DEB=$(ls "$DEPLOY_DIR"/microscopi_*_arm64.deb 2>/dev/null | tail -1)
+echo "==> Done."
+echo "    Install tree: $DEPLOY_DIR/install/usr/local/"
+echo "    .deb package: $DEB"
+echo ""
+echo "    Install on Pi:"
+echo "      scp \"$DEB\" microscopi@192.168.1.220:~/"
+echo "      ssh microscopi@192.168.1.220 \"sudo dpkg -i ~/$(basename "$DEB")\""

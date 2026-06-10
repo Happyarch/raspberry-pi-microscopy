@@ -28,7 +28,7 @@ echo "==> Extracting debug artifacts..."
 rm -rf "$DEPLOY_DIR/install-debug"
 mkdir -p "$DEPLOY_DIR/install-debug/usr/local"
 CONTAINER=$(docker create --platform linux/arm64 "$IMAGE_TAG")
-docker cp "$CONTAINER:/usr/local/." "$DEPLOY_DIR/install-debug/usr/local/"
+docker cp "$CONTAINER:/install/usr/local/." "$DEPLOY_DIR/install-debug/usr/local/"
 docker rm "$CONTAINER"
 
 echo "==> Done. Debug binary: $DEPLOY_DIR/install-debug/usr/local/bin/microscopi"

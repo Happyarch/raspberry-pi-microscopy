@@ -17,6 +17,10 @@ RUN printf 'Package: libcamera* python3-libcamera\nPin: origin archive.raspberry
     > /etc/apt/preferences.d/libcamera-pi
 
 # Install build tools and all ARM64 runtime + dev libraries.
+#
+# Runtime libraries are listed explicitly so that `dpkg -i microscopi_*.deb`
+# (the validation step below) can resolve all Depends without reaching out to
+# an apt mirror.  Each group corresponds to a Depends entry in build-deb.sh.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
@@ -29,20 +33,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsdl2-dev \
     libsdl2-ttf-dev \
     libsdl2-image-dev \
+    # KMS/DRM display backend (SDL2 kmsdrm, used instead of X11/Wayland)
+    libdrm-dev \
+    libgbm-dev \
+    libgl-dev \
+    libegl-dev \
     # Video encode / mux
     libavformat-dev \
     libavcodec-dev \
     libavutil-dev \
-    # SVG rendering at runtime
-    librsvg2-bin \
-    # Font
-    fonts-roboto \
-    # MJPEG encoding (turbojpeg API).
-    # Debian splits this into two packages: libjpeg62-turbo-dev (libjpeg compat)
-    # and libturbojpeg0-dev (tj* API + libturbojpeg.pc). We need the latter.
+    # MJPEG encoding (turbojpeg API)
     libturbojpeg0-dev \
     # TLS for optional HTTPS stream
     libssl-dev \
+    # SVG icon rendering at runtime
+    librsvg2-bin \
+    # H.264 encoder setup / V4L2 utilities
+    v4l-utils \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -50,12 +57,26 @@ COPY . .
 
 ARG CMAKE_BUILD_TYPE=Release
 ARG JOBS=8
-# Install prefix is /usr/local so the extracted tree maps directly to where
-# files live on the Pi. Extract with: docker cp container:/usr/local/. deploy/
+
+# Build and stage-install under /install (DESTDIR keeps /usr/local as the
+# embedded install prefix so the .deb data tree is correct).
 RUN cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} \
         -DCMAKE_INSTALL_PREFIX=/usr/local \
     && cmake --build build --parallel ${JOBS} \
-    && cmake --install build
+    && DESTDIR=/install cmake --install build
 
-# Output: /install contains the compiled binary, icons, font, and default config.
+# Package the staged tree as an ARM64 .deb using only ar + tar + gzip.
+RUN mkdir -p /output \
+ && MICROSCOPI_INSTALL_DIR=/install \
+    MICROSCOPI_OUTPUT_DIR=/output \
+    ./scripts/build-deb.sh
+
+# Install the .deb to validate that all declared Depends are satisfied and
+# that the package installs cleanly (postinst runs, service file lands, etc.).
+# `|| true` on service commands because systemd is not running in the builder.
+RUN find /output -name 'microscopi_*_arm64.deb' -exec dpkg -i {} \;
+
+# Outputs available for extraction:
+#   /install/usr/local/   — raw install tree (used by build-image.sh via pi-gen)
+#   /output/              — the .deb package

@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
-# Build a .deb package from the artifacts already in deploy/install/.
-# Run scripts/build-app.sh first to populate deploy/install/.
+# Build a .deb package from pre-built artifacts.
+#
+# Default usage (after build-app.sh):
+#   ./scripts/build-deb.sh
+#   Output: deploy/microscopi_<version>_arm64.deb
+#
+# Inside the Docker build container (paths override via env):
+#   MICROSCOPI_INSTALL_DIR=/install MICROSCOPI_OUTPUT_DIR=/output ./scripts/build-deb.sh
 #
 # Requires only: ar (binutils), tar, gzip — present on any Linux host.
 # No dpkg installation needed; the .deb format is assembled directly.
-#
-# Output: deploy/microscopi_<version>_arm64.deb
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEPLOY_DIR="$REPO_ROOT/deploy"
-INSTALL_DIR="$DEPLOY_DIR/install"
+
+# Path overrides for running inside the Docker build container.
+INSTALL_DIR="${MICROSCOPI_INSTALL_DIR:-$DEPLOY_DIR/install}"
+OUT_DIR="${MICROSCOPI_OUTPUT_DIR:-$DEPLOY_DIR}"
+
 FILES_DIR="$REPO_ROOT/config/pi-gen/stage3/01-microscopi/files"
 
 # --- Sanity checks ---
@@ -20,7 +28,7 @@ done
 
 [[ -x "$INSTALL_DIR/usr/local/bin/microscopi" ]] || {
     echo "ERROR: $INSTALL_DIR/usr/local/bin/microscopi not found."
-    echo "       Run ./scripts/build-app.sh first."
+    echo "       Run ./scripts/build-app.sh first (or set MICROSCOPI_INSTALL_DIR)."
     exit 1
 }
 
@@ -83,6 +91,10 @@ Depends: libcamera0.5,
          libsdl2-2.0-0,
          libsdl2-ttf-2.0-0,
          libsdl2-image-2.0-0,
+         libdrm2,
+         libgbm1,
+         libgl1,
+         libegl1,
          libavformat59,
          libavcodec59,
          libturbojpeg0,
@@ -176,16 +188,11 @@ tar -czf "$WORK/data.tar.gz" \
     --exclude="./DEBIAN" \
     .
 
-mkdir -p "$DEPLOY_DIR"
-OUTPUT="$DEPLOY_DIR/$DEB_FILENAME"
+mkdir -p "$OUT_DIR"
+OUTPUT="$OUT_DIR/$DEB_FILENAME"
 rm -f "$OUTPUT"
 
 # ar -D: deterministic mode (no timestamps/uids in ar headers)
 (cd "$WORK" && ar -rcD "$OUTPUT" debian-binary control.tar.gz data.tar.gz)
 
-echo "==> Done."
-echo "    Package: $OUTPUT"
-echo ""
-echo "    Install on Pi:"
-echo "      scp \"$OUTPUT\" microscopi@192.168.1.220:~/"
-echo "      ssh microscopi@192.168.1.220 'sudo dpkg -i ~/$DEB_FILENAME'"
+echo "==> Done. $OUTPUT"
