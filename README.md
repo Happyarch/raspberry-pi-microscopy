@@ -67,6 +67,24 @@ Compiles inside an ARM64 Debian Bookworm Docker container (QEMU-emulated on x86_
 # Output: deploy/install/usr/local/
 ```
 
+### Build a .deb package
+
+Packages the compiled binary, assets, config, and systemd service into an
+ARM64 `.deb` for direct installation on a Pi that already runs Raspberry Pi OS
+Bookworm. Requires only `ar`, `tar`, and `gzip` — no `dpkg` needed on the host.
+
+```bash
+./scripts/build-deb.sh
+# Output: deploy/microscopi_<version>_arm64.deb
+```
+
+Install on the Pi:
+
+```bash
+scp deploy/microscopi_*_arm64.deb microscopi@192.168.1.220:~/
+ssh microscopi@192.168.1.220 'sudo dpkg -i ~/microscopi_*_arm64.deb'
+```
+
 ### Build the full OS image
 
 ```bash
@@ -166,6 +184,7 @@ config/
 
 scripts/
   build-app.sh            Build binary in ARM64 Docker container
+  build-deb.sh            Package deploy/install/ as an ARM64 .deb
   build-image.sh          Build full Pi OS image with pi-gen
   build-image-debug.sh    Debug image with gdb, debug symbols, crash tooling
   flash.sh                Flash image to SD card

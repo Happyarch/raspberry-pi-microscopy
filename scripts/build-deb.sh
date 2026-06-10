@@ -78,16 +78,19 @@ Description: Raspberry Pi microscopy camera application
  camera module as a microscope. Features include MJPEG streaming,
  timelapse recording, MKV video with H.264, and a Sony-Alpha-style OSD.
 Depends: libcamera0.5,
+         libcamera-base0.5,
          libcamera-ipa,
-         libavformat59,
-         libavcodec59,
-         libavutil57,
          libsdl2-2.0-0,
          libsdl2-ttf-2.0-0,
          libsdl2-image-2.0-0,
-         librsvg2-bin,
+         libavformat59,
+         libavcodec59,
          libturbojpeg0,
          libssl3,
+         libstdc++6,
+         libgcc-s1,
+         libc6,
+         librsvg2-bin,
          v4l-utils
 EOF
 
