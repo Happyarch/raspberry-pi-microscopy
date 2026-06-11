@@ -74,6 +74,21 @@ The Pi user is `microscopi` (not `pi`). SSH and scp target `microscopi@192.168.1
 ## Permissions
 When a task requires root privileges, do not attempt to run it or find a workaround. Instead, tell the user what needs to be done, provide the exact command, and explain what it does so they can run it themselves.
 
+## Testing
+Any major C++ code — new modules, non-trivial algorithms, data structures, parsers — must include tests in `tests/` as part of the verification stage of its plan. The existing test in `tests/test_timelapse.cpp` is the model: plain C++17, no framework, `assert()`-based, compiled natively on the host (no cross-compilation needed for pure logic tests).
+
+Tests are not required for thin SDL2/libcamera glue code that can only be exercised on the hardware, but any logic that can be isolated should be.
+
+## Documentation
+After verifying a feature works, update all documentation that is affected. This list is representative, not exhaustive — use judgement about what changed:
+
+- **`TODO.md`** — mark completed items done, add newly discovered issues
+- **`README.md`** — user-facing feature descriptions, install steps, quick-start
+- **`CLAUDE.md`** (this file) — stack changes, new design decisions, updated build steps, new dependencies
+- **`docs/controls.md`** — any new or changed keyboard bindings, commands, or config keys
+- **`docs/web-ui.md`** — web UI or API changes
+- **`config/microscopi.conf`** — new config keys with commented defaults
+
 ## Commit discipline
 Commit after each meaningful change. Use descriptive messages. Do not amend published commits.
 
