@@ -445,8 +445,11 @@ function renderGrid() {
 
     const isSession = 'frame_count' in item;
     if (isSession) {
+      const thumbHtml = item.first_frame_id
+        ? '<img src="/api/media/'+item.first_frame_id+'/thumb" loading="lazy" alt="">'
+        : '<span class="gthumb-icon">&#128444;</span>';
       card.innerHTML =
-        '<div class="gthumb"><span class="gthumb-icon">&#127897;</span></div>'
+        '<div class="gthumb">'+thumbHtml+'</div>'
         +'<div class="gmeta">'
         +'<div class="gname">'+esc(item.session_name)+'</div>'
         +'<div class="gdate">'+(item.started_at||'').substring(0,10)+' &middot; '+item.frame_count+' frames</div>'
@@ -977,8 +980,42 @@ static bool generate_still_thumb(const std::string& src, const std::string& dst,
 }
 
 // Generate a thumbnail from a video by spawning ffmpeg.
+// Returns video duration in seconds via ffprobe, or 0.0 on failure.
+static double probe_video_duration(const std::string& src) {
+    int pipefd[2];
+    if (::pipe(pipefd) != 0) return 0.0;
+    pid_t pid = ::fork();
+    if (pid < 0) { ::close(pipefd[0]); ::close(pipefd[1]); return 0.0; }
+    if (pid == 0) {
+        ::close(pipefd[0]);
+        ::dup2(pipefd[1], STDOUT_FILENO);
+        ::close(pipefd[1]);
+        int devnull = ::open("/dev/null", O_RDWR);
+        if (devnull >= 0) { ::dup2(devnull, STDIN_FILENO); ::dup2(devnull, STDERR_FILENO); ::close(devnull); }
+        const char* argv[] = {
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "csv=p=0",
+            src.c_str(), nullptr
+        };
+        ::execvp("ffprobe", const_cast<char* const*>(argv));
+        ::_exit(1);
+    }
+    ::close(pipefd[1]);
+    char buf[64] = {};
+    ::read(pipefd[0], buf, sizeof(buf) - 1);
+    ::close(pipefd[0]);
+    int status = 0;
+    ::waitpid(pid, &status, 0);
+    try { return std::stod(buf); } catch (...) { return 0.0; }
+}
+
 static bool generate_video_thumb(const std::string& src, const std::string& dst, int target_w) {
+    double dur = probe_video_duration(src);
     std::string scale = "scale=" + std::to_string(target_w) + ":-1";
+    char ss_buf[32] = "0";
+    if (dur > 0.0) std::snprintf(ss_buf, sizeof(ss_buf), "%.3f", dur / 2.0);
+
     pid_t pid = ::fork();
     if (pid < 0) return false;
     if (pid == 0) {
@@ -990,8 +1027,9 @@ static bool generate_video_thumb(const std::string& src, const std::string& dst,
             ::close(devnull);
         }
         const char* argv[] = {
-            "ffmpeg", "-i", src.c_str(), "-vframes", "1",
-            "-vf", scale.c_str(), "-y", dst.c_str(), nullptr
+            "ffmpeg", "-ss", ss_buf, "-i", src.c_str(),
+            "-frames:v", "1", "-vf", scale.c_str(), "-update", "1", "-y",
+            dst.c_str(), nullptr
         };
         ::execvp("ffmpeg", const_cast<char* const*>(argv));
         ::_exit(1);

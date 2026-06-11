@@ -285,7 +285,8 @@ static TimelapseSession row_to_session(sqlite3_stmt* stmt) {
     ts.stopped_at   = s(4);
     ts.fn_name      = s(5);
     ts.params_json  = s(6);
-    ts.frame_count  = sqlite3_column_int(stmt, 7);
+    ts.frame_count    = sqlite3_column_int(stmt, 7);
+    ts.first_frame_id = sqlite3_column_int64(stmt, 8);
     return ts;
 }
 
@@ -330,8 +331,9 @@ std::vector<TimelapseSession> MediaDb::list_timelapses(int offset, int limit) {
     std::vector<TimelapseSession> result;
     if (!db_) return result;
     const char* sql =
-        "SELECT id,session_dir,session_name,started_at,stopped_at,fn_name,params_json,frame_count"
-        " FROM timelapses ORDER BY started_at DESC LIMIT ? OFFSET ?";
+        "SELECT t.id,t.session_dir,t.session_name,t.started_at,t.stopped_at,t.fn_name,t.params_json,t.frame_count,"
+        "(SELECT m.id FROM media m WHERE m.timelapse_id=t.id ORDER BY m.id ASC LIMIT 1)"
+        " FROM timelapses t ORDER BY t.started_at DESC LIMIT ? OFFSET ?";
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return result;
     sqlite3_bind_int(stmt, 1, limit);

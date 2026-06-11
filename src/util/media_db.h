@@ -26,6 +26,7 @@ struct TimelapseSession {
     std::string fn_name;
     std::string params_json;
     int         frame_count{0};
+    int64_t     first_frame_id{0}; // media.id of the first frame, 0 if none
 };
 
 class MediaDb {

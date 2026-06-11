@@ -22,6 +22,14 @@
 
 ## Medium Priority
 
+- [ ] **Timelapse folder cover art** — currently shows the first frame as a flat thumbnail.
+  Replace with a stacked-photo effect: render 3–4 frames sampled evenly through the session,
+  composited as slightly rotated overlapping cards (each ~5–10° offset) like a physical photo
+  stack. Generate once as a cached PNG in the thumb cache dir; invalidate when frame_count
+  changes. Could be done with a small Cairo/Skia composite or an ffmpeg `overlay` filter chain.
+
+
+
 - ✅ **Still capture quality** — implemented: `capture_still` now does a brief reconfigure
   to `StreamRole::StillCapture` (full sensor resolution), takes one frame, then restarts
   the viewfinder. The brief pause during still capture is expected and unavoidable on Pi 3

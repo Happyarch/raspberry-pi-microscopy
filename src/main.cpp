@@ -135,6 +135,7 @@ static std::string serialize_json(const std::vector<TimelapseSession>& sessions)
            + ",\"stopped_at\":" + json_str(s.stopped_at)
            + ",\"fn_name\":" + json_str(s.fn_name)
            + ",\"frame_count\":" + std::to_string(s.frame_count)
+           + ",\"first_frame_id\":" + std::to_string(s.first_frame_id)
            + "}";
     }
     j += "]";
