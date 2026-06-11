@@ -952,60 +952,28 @@ static void serve_file(const Conn& c, const std::string& path,
 
 // Generate a 320-px-wide JPEG thumbnail from a still image using libturbojpeg.
 static bool generate_still_thumb(const std::string& src, const std::string& dst, int target_w) {
-    FILE* f = ::fopen(src.c_str(), "rb");
-    if (!f) return false;
-    ::fseek(f, 0, SEEK_END);
-    long sz = ::ftell(f);
-    ::fseek(f, 0, SEEK_SET);
-    if (sz <= 0) { ::fclose(f); return false; }
-    std::vector<uint8_t> buf((size_t)sz);
-    if ((long)::fread(buf.data(), 1, (size_t)sz, f) < sz) { ::fclose(f); return false; }
-    ::fclose(f);
-
-    tjhandle tj = tjInitDecompress();
-    if (!tj) return false;
-
-    int w, h, subsamp, colorspace;
-    if (tjDecompressHeader3(tj, buf.data(), (unsigned long)buf.size(),
-                            &w, &h, &subsamp, &colorspace) < 0) {
-        tjDestroy(tj); return false;
-    }
-
-    int dw = target_w;
-    int dh = (w > 0) ? (h * dw / w) : dw;
-    if (dh < 1) dh = 1;
-
-    std::vector<uint8_t> full_rgb((size_t)(w * h * 3));
-    if (tjDecompress2(tj, buf.data(), (unsigned long)buf.size(),
-                      full_rgb.data(), w, 0, h, TJPF_RGB, 0) < 0) {
-        tjDestroy(tj); return false;
-    }
-
-    // Bilinear-ish downsample (nearest).
-    std::vector<uint8_t> thumb_rgb((size_t)(dw * dh * 3));
-    for (int y = 0; y < dh; ++y) {
-        int sy = y * h / dh;
-        for (int x = 0; x < dw; ++x) {
-            int sx = x * w / dw;
-            const uint8_t* sp = &full_rgb[(size_t)(sy * w + sx) * 3];
-            uint8_t*       dp = &thumb_rgb[(size_t)(y * dw + x) * 3];
-            dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2];
+    std::string scale = "scale=" + std::to_string(target_w) + ":-1";
+    pid_t pid = ::fork();
+    if (pid < 0) return false;
+    if (pid == 0) {
+        int devnull = ::open("/dev/null", O_RDWR);
+        if (devnull >= 0) {
+            ::dup2(devnull, STDIN_FILENO);
+            ::dup2(devnull, STDOUT_FILENO);
+            ::dup2(devnull, STDERR_FILENO);
+            ::close(devnull);
         }
+        const char* argv[] = {
+            "ffmpeg", "-i", src.c_str(),
+            "-vf", scale.c_str(), "-frames:v", "1", "-update", "1", "-y",
+            dst.c_str(), nullptr
+        };
+        ::execvp("ffmpeg", const_cast<char* const*>(argv));
+        ::_exit(1);
     }
-
-    uint8_t* jpeg_buf = nullptr;
-    unsigned long jpeg_sz = 0;
-    bool ok = tjCompress2(tj, thumb_rgb.data(), dw, 0, dh, TJPF_RGB,
-                          &jpeg_buf, &jpeg_sz, TJSAMP_420, 75, 0) == 0;
-    tjDestroy(tj);
-
-    if (!ok || !jpeg_buf) { if (jpeg_buf) tjFree(jpeg_buf); return false; }
-
-    FILE* out = ::fopen(dst.c_str(), "wb");
-    bool wrote = out && (::fwrite(jpeg_buf, 1, jpeg_sz, out) == jpeg_sz);
-    if (out) ::fclose(out);
-    tjFree(jpeg_buf);
-    return wrote;
+    int status = 0;
+    ::waitpid(pid, &status, 0);
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
 // Generate a thumbnail from a video by spawning ffmpeg.
