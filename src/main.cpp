@@ -1,17 +1,21 @@
 #include "camera/camera.h"
 #include "camera/encoder.h"
 #include "config/config.h"
+#include "ui/gallery.h"
 #include "ui/input.h"
 #include "ui/osd.h"
 #include "ui/renderer.h"
 #include "util/exif_writer.h"
 #include "util/exposure.h"
+#include "util/media_db.h"
 #include "util/mjpeg_server.h"
 #include "util/resolution.h"
 #include "util/socket_server.h"
 #include "util/timelapse.h"
 
 #include <SDL2/SDL.h>
+#include <SDL2/SDL_image.h>
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -38,6 +42,7 @@ static uint64_t now_ms() {
     using namespace std::chrono;
     return static_cast<uint64_t>(
         duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+
 }
 
 static std::string user_config_path() {
@@ -77,6 +82,74 @@ static std::string timestamp_filename(const std::string& ext) {
     return std::string(buf) + ext;
 }
 
+static std::string iso8601_now() {
+    time_t t  = time(nullptr);
+    struct tm* tm = localtime(&t);
+    char buf[32];
+    strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", tm);
+    return buf;
+}
+
+// Minimal JSON array serialisation for MediaItem / TimelapseSession vectors.
+static std::string json_str(const std::string& s) {
+    // Escape backslash and double-quote; all other chars are safe in our filenames.
+    std::string out;
+    out.reserve(s.size() + 2);
+    out += '"';
+    for (char c : s) {
+        if (c == '\\') { out += "\\\\"; }
+        else if (c == '"') { out += "\\\""; }
+        else { out += c; }
+    }
+    out += '"';
+    return out;
+}
+
+static std::string serialize_json(const std::vector<MediaItem>& items) {
+    std::string j = "[";
+    for (size_t i = 0; i < items.size(); ++i) {
+        const auto& m = items[i];
+        if (i) j += ",";
+        j += "{\"id\":" + std::to_string(m.id)
+           + ",\"type\":" + json_str(m.type)
+           + ",\"path\":" + json_str(m.path)
+           + ",\"filename\":" + json_str(m.filename)
+           + ",\"captured_at\":" + json_str(m.captured_at)
+           + ",\"size_bytes\":" + std::to_string(m.size_bytes)
+           + ",\"timelapse_id\":" + std::to_string(m.timelapse_id)
+           + "}";
+    }
+    j += "]";
+    return j;
+}
+
+static std::string serialize_json(const std::vector<TimelapseSession>& sessions) {
+    std::string j = "[";
+    for (size_t i = 0; i < sessions.size(); ++i) {
+        const auto& s = sessions[i];
+        if (i) j += ",";
+        j += "{\"id\":" + std::to_string(s.id)
+           + ",\"session_dir\":" + json_str(s.session_dir)
+           + ",\"session_name\":" + json_str(s.session_name)
+           + ",\"started_at\":" + json_str(s.started_at)
+           + ",\"stopped_at\":" + json_str(s.stopped_at)
+           + ",\"fn_name\":" + json_str(s.fn_name)
+           + ",\"frame_count\":" + std::to_string(s.frame_count)
+           + "}";
+    }
+    j += "]";
+    return j;
+}
+
+static std::string serialize_json(const std::vector<std::string>& strs) {
+    std::string j = "[";
+    for (size_t i = 0; i < strs.size(); ++i) {
+        if (i) j += ",";
+        j += json_str(strs[i]);
+    }
+    j += "]";
+    return j;
+}
 
 // ---------------------------------------------------------------------------
 // main
@@ -158,6 +231,15 @@ int main() {
     MjpegServer mjpeg(cfg.stream_port, cfg.stream_quality, cfg.stream_scale, cfg.stream_fps,
                       cfg.stream_https, cfg.stream_cert, cfg.stream_key);
 
+    // ---- Media database ----
+    const char* home_env  = std::getenv("HOME");
+    std::string home_str  = home_env ? home_env : "/home/microscopi";
+    std::string db_dir    = ensure_dir(home_str + "/.local/share/microscopi");
+    std::string thumb_dir = ensure_dir(home_str + "/.cache/microscopi/thumbs");
+    auto db = std::make_unique<MediaDb>(db_dir + "/media.db",
+                                        cfg.stills_dir, cfg.video_dir, cfg.tl_dir);
+    mjpeg.set_media_db(db.get(), thumb_dir);
+
     // ---- Camera mode list (built once after camera starts) ----
     std::vector<CameraMode>  cam_modes     = camera.get_modes();
     std::vector<std::string> cam_mode_labels;
@@ -202,9 +284,14 @@ int main() {
     else if (cfg.capture_format == "jpeg+raw") still_fmt = StillFormat::JPEG_RAW;
 
     OsdState   osd_state{};
-    bool       recording      = false;
-    uint64_t   record_start   = 0;
-    int        still_count    = 0;
+    bool       recording           = false;
+    uint64_t   record_start        = 0;
+    int        still_count         = 0;
+    std::string current_video_path;       // path of the video being recorded
+
+    // Gallery state (headed mode only)
+    GalleryState gallery_state;
+    bool         gallery_open = false;
 
     // Timelapse state
     bool        tl_dialog_open      = false;
@@ -212,6 +299,7 @@ int main() {
     std::string tl_dialog_frames    = "0";
     int         tl_dialog_field     = 0;
     bool        tl_active           = false;
+    int64_t     tl_session_id       = 0;    // DB id of the active timelapse session
     uint64_t    tl_start_mono       = 0;    // now_ms() at session start
     uint64_t    tl_next_ms          = 0;    // absolute time of next capture
     int         tl_count            = 0;    // frames captured this session
@@ -269,10 +357,13 @@ int main() {
         std::string new_path = ensure_dir(cfg.tl_dir) + "/" + new_name;
         std::error_code ec;
         fs::rename(tl_session_dir, new_path, ec);
-        if (ec)
+        if (ec) {
             std::cerr << "[tl] rename failed: " << ec.message() << "\n";
-        else
+        } else {
             tl_session_dir = new_path;
+            db->rename_timelapse_session(tl_session_id, new_path);
+        }
+        db->finish_timelapse(tl_session_id, iso8601_now());
 
         std::cerr << "[tl] stopped: " << tl_count
                   << " frames, dir: " << tl_session_dir << "\n";
@@ -298,20 +389,25 @@ int main() {
         tl_session_dir = ensure_dir(cfg.tl_dir) + "/" + dir_name;
         fs::create_directories(tl_session_dir);
 
-        // Write session metadata
-        std::ofstream jf(tl_session_dir + "/session.json");
-        if (jf) {
-            jf << "{"
-               << "\"fn\":\"" << tl_fn_name(fn) << "\""
-               << ",\"base_ms\":"  << params.base_ms
-               << ",\"k\":"        << params.k
-               << ",\"floor_ms\":" << params.floor_ms
-               << ",\"ceil_ms\":"  << params.ceil_ms
+        // Write session metadata (for ffmpeg post-processing reference)
+        std::string params_json;
+        {
+            std::ostringstream pj;
+            pj << "{\"fn\":\"" << tl_fn_name(fn) << "\""
+               << ",\"base_ms\":"    << params.base_ms
+               << ",\"k\":"          << params.k
+               << ",\"floor_ms\":"   << params.floor_ms
+               << ",\"ceil_ms\":"    << params.ceil_ms
                << ",\"max_frames\":" << max_frames
-               << ",\"use_rtc\":"  << (cfg.tl_use_rtc ? "true" : "false")
+               << ",\"use_rtc\":"    << (cfg.tl_use_rtc ? "true" : "false")
                << "}";
+            params_json = pj.str();
         }
+        std::ofstream jf(tl_session_dir + "/session.json");
+        if (jf) jf << params_json;
 
+        tl_session_id = db->add_timelapse_session(tl_session_dir, iso8601_now(),
+                                                   tl_fn_name(fn), params_json);
         tl_active = true;
         std::cerr << "[tl] started: fn=" << tl_fn_name(fn)
                   << " base=" << params.base_ms << "ms"
@@ -471,7 +567,8 @@ int main() {
     };
 
     cbs.on_still = [&]{
-        do_still(ensure_dir(cfg.stills_dir) + "/" + timestamp_filename(".jpg"));
+        std::string path = ensure_dir(cfg.stills_dir) + "/" + timestamp_filename(".jpg");
+        if (do_still(path)) db->add_still(path);
     };
 
     cbs.on_focus_scroll = [&](int dir) {
@@ -509,14 +606,15 @@ int main() {
     cbs.on_record_toggle = [&]{
         if (!recording) {
             if (tl_active) return; // mutual exclusion
-            std::string path = ensure_dir(cfg.video_dir) + "/" + timestamp_filename(".mkv");
-            if (encoder.open(path)) {
+            current_video_path = ensure_dir(cfg.video_dir) + "/" + timestamp_filename(".mkv");
+            if (encoder.open(current_video_path)) {
                 recording    = true;
                 record_start = now_ms();
             }
         } else {
             encoder.close();
             recording = false;
+            if (!current_video_path.empty()) db->add_video(current_video_path);
         }
     };
 
@@ -564,6 +662,123 @@ int main() {
         tl_dialog_field = 0;
     };
 
+    // ---- Gallery callbacks (headed mode only; db is always available) ----
+    auto gallery_per_page = [&]() -> int {
+        return std::max(1, gallery_state.tiles_per_row * gallery_state.rows_visible);
+    };
+    auto gallery_reload = [&]{
+        gallery_load_page(gallery_state, db.get(),
+                          renderer ? renderer->sdl_renderer() : nullptr,
+                          thumb_dir);
+    };
+    cbs.on_gallery_toggle = [&]{
+        if (gallery_open) {
+            gallery_free_textures(gallery_state);
+            gallery_open = false;
+        } else {
+            gallery_state = GalleryState{};
+            if (renderer)
+                gallery_compute_layout(gallery_state,
+                                       renderer->width(), renderer->height());
+            gallery_reload();
+            gallery_open = true;
+        }
+    };
+    cbs.on_gallery_next_tab = [&]{
+        if (!gallery_open) return;
+        gallery_state.tab = static_cast<GalleryState::Tab>(
+            ((int)gallery_state.tab + 1) % 3);
+        gallery_state.page = 0;
+        gallery_state.selection = 0;
+        gallery_state.tl_session_id = 0;
+        gallery_state.tl_session_name.clear();
+        gallery_reload();
+    };
+    cbs.on_gallery_nav_left = [&]{
+        if (!gallery_open) return;
+        if (gallery_state.selection > 0) --gallery_state.selection;
+    };
+    cbs.on_gallery_nav_right = [&]{
+        if (!gallery_open) return;
+        int total = (int)std::max(gallery_state.items.size(), gallery_state.sessions.size());
+        if (gallery_state.selection < total - 1) ++gallery_state.selection;
+    };
+    cbs.on_gallery_nav_up = [&]{
+        if (!gallery_open) return;
+        if (gallery_state.selection >= gallery_state.tiles_per_row)
+            gallery_state.selection -= gallery_state.tiles_per_row;
+        else if (gallery_state.page > 0) {
+            --gallery_state.page;
+            gallery_reload();
+            int per = gallery_per_page();
+            gallery_state.selection = std::max(0, per - 1);
+        }
+    };
+    cbs.on_gallery_nav_down = [&]{
+        if (!gallery_open) return;
+        int total = (int)std::max(gallery_state.items.size(), gallery_state.sessions.size());
+        int next = gallery_state.selection + gallery_state.tiles_per_row;
+        if (next < total) {
+            gallery_state.selection = next;
+        } else if (total == gallery_per_page()) {
+            ++gallery_state.page;
+            gallery_state.selection = 0;
+            gallery_reload();
+        }
+    };
+    cbs.on_gallery_select = [&]{
+        if (!gallery_open) return;
+        if (gallery_state.fullscreen) return; // already in fullscreen
+        int idx = gallery_state.selection;
+        if (gallery_state.tab == GalleryState::Tab::Timelapses &&
+            gallery_state.tl_session_id == 0) {
+            // Drill into timelapse session.
+            if (idx < (int)gallery_state.sessions.size()) {
+                gallery_state.tl_session_id   = gallery_state.sessions[idx].id;
+                gallery_state.tl_session_name = gallery_state.sessions[idx].session_name;
+                gallery_state.page      = 0;
+                gallery_state.selection = 0;
+                gallery_reload();
+            }
+        } else {
+            // Open still/frame fullscreen.
+            if (idx < (int)gallery_state.items.size()) {
+                const auto& item = gallery_state.items[idx];
+                if (item.type == "still" || item.type == "tl_frame") {
+                    SDL_Surface* sur = IMG_Load(item.path.c_str());
+                    if (sur && renderer) {
+                        if (gallery_state.preview_tex)
+                            SDL_DestroyTexture(gallery_state.preview_tex);
+                        gallery_state.preview_tex  = SDL_CreateTextureFromSurface(
+                            renderer->sdl_renderer(), sur);
+                        SDL_FreeSurface(sur);
+                        gallery_state.preview_name = item.filename;
+                        gallery_state.fullscreen   = true;
+                    }
+                }
+            }
+        }
+    };
+    cbs.on_gallery_back = [&]{
+        if (!gallery_open) return;
+        if (gallery_state.fullscreen) {
+            if (gallery_state.preview_tex) {
+                SDL_DestroyTexture(gallery_state.preview_tex);
+                gallery_state.preview_tex = nullptr;
+            }
+            gallery_state.fullscreen = false;
+        } else if (gallery_state.tl_session_id > 0) {
+            gallery_state.tl_session_id = 0;
+            gallery_state.tl_session_name.clear();
+            gallery_state.page = 0;
+            gallery_state.selection = 0;
+            gallery_reload();
+        } else {
+            gallery_free_textures(gallery_state);
+            gallery_open = false;
+        }
+    };
+
     // InputHandler only exists when SDL is available
     std::unique_ptr<InputHandler> input;
     if (!headless) {
@@ -597,7 +812,8 @@ int main() {
         if (verb == "help")
             return "OK ping status still record_start record_stop "
                    "focus(<pos>|up|down) iso(<val>|auto) shutter(<us>) "
-                   "mode(p|a|s|m) af(<bool>) crosshair(<bool>) timelapse(start|stop|status) quit";
+                   "mode(p|a|s|m) af(<bool>) crosshair(<bool>) timelapse(start|stop|status) "
+                   "gallery(list|scan|verify) quit";
 
         if (verb == "status") {
             CameraStatus st = camera.get_status();
@@ -620,22 +836,24 @@ int main() {
         if (verb == "still") {
             std::string path = ensure_dir(cfg.stills_dir) + "/" + timestamp_filename(".jpg");
             if (!do_still(path)) return "ERR capture failed";
+            db->add_still(path);
             return "OK " + path;
         }
 
         if (verb == "record_start") {
             if (recording) return "ERR already recording";
-            std::string path = ensure_dir(cfg.video_dir) + "/" + timestamp_filename(".mkv");
-            if (!encoder.open(path)) return "ERR encoder open failed";
+            current_video_path = ensure_dir(cfg.video_dir) + "/" + timestamp_filename(".mkv");
+            if (!encoder.open(current_video_path)) return "ERR encoder open failed";
             recording    = true;
             record_start = now_ms();
-            return "OK " + path;
+            return "OK " + current_video_path;
         }
 
         if (verb == "record_stop") {
             if (!recording) return "ERR not recording";
             encoder.close();
             recording = false;
+            if (!current_video_path.empty()) db->add_video(current_video_path);
             return "OK";
         }
 
@@ -824,6 +1042,48 @@ int main() {
             return "ERR usage: timelapse start|stop|status";
         }
 
+        if (verb == "gallery") {
+            if (args.size() < 2) return "ERR usage: gallery list|scan|verify";
+
+            if (args[1] == "scan") {
+                auto r = db->rebuild_from_disk();
+                return "{\"added\":" + std::to_string(r.added) +
+                       ",\"removed\":" + std::to_string(r.removed) + "}";
+            }
+
+            if (args[1] == "verify") {
+                return serialize_json(db->verify());
+            }
+
+            if (args[1] == "list") {
+                std::string type;
+                int page = 0, limit = 20;
+                int64_t session_id = 0;
+                for (size_t i = 2; i < args.size(); ++i) {
+                    auto eq = args[i].find('=');
+                    if (eq == std::string::npos) continue;
+                    std::string k = args[i].substr(0, eq);
+                    std::string v = args[i].substr(eq + 1);
+                    try {
+                        if      (k == "type")    type       = v;
+                        else if (k == "page")    page       = std::stoi(v);
+                        else if (k == "limit")   limit      = std::stoi(v);
+                        else if (k == "session") session_id = std::stoll(v);
+                    } catch (...) {}
+                }
+                limit  = std::max(1, std::min(limit, 100));
+                int offset = page * limit;
+
+                if (type == "stills")     return serialize_json(db->list_stills(offset, limit));
+                if (type == "videos")     return serialize_json(db->list_videos(offset, limit));
+                if (type == "timelapses") return serialize_json(db->list_timelapses(offset, limit));
+                if (type == "frames")     return serialize_json(db->list_timelapse_frames(session_id, offset, limit));
+                return "ERR unknown type — use stills|videos|timelapses|frames";
+            }
+
+            return "ERR usage: gallery list|scan|verify";
+        }
+
         return "ERR unknown command: " + verb;
     };
 
@@ -871,6 +1131,7 @@ int main() {
             input->set_mode_list_open(cam_mode_open);
             input->set_tl_dialog_open(tl_dialog_open);
             input->set_tl_active(tl_active);
+            input->set_gallery_open(gallery_open);
             if (!input->process_events()) break;
         }
 
@@ -919,8 +1180,10 @@ int main() {
                     snprintf(buf, sizeof(buf), "t%010llu.jpg", (unsigned long long)elapsed);
                     fname = buf;
                 }
-                if (do_still(tl_session_dir + "/" + fname, false)) {
+                std::string frame_path = tl_session_dir + "/" + fname;
+                if (do_still(frame_path, false)) {
                     ++tl_count;
+                    db->add_timelapse_frame(tl_session_id, frame_path);
                     if (tl_max_frames_run > 0 && tl_count >= tl_max_frames_run) {
                         stop_timelapse();
                     } else {
@@ -982,6 +1245,9 @@ int main() {
             mjpeg.set_status(j.str());
         }
 
+        osd_state.gallery_open = gallery_open;
+        osd_state.gallery      = gallery_open ? &gallery_state : nullptr;
+
         if (renderer) {
             renderer->present_frame(frame.y, frame.u, frame.v,
                                     frame.y_stride, frame.uv_stride,
@@ -992,6 +1258,7 @@ int main() {
 
     if (tl_active) stop_timelapse();
     if (recording) encoder.close();
+    if (gallery_open) gallery_free_textures(gallery_state);
     camera.stop();
     return 0;
 }

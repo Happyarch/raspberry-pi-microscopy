@@ -46,6 +46,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libturbojpeg0-dev \
     # TLS for optional HTTPS stream
     libssl-dev \
+    # Media catalog database
+    libsqlite3-dev \
     # SVG icon rendering at runtime
     librsvg2-bin \
     # H.264 encoder setup / V4L2 utilities

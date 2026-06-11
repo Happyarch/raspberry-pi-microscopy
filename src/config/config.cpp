@@ -174,6 +174,7 @@ Config load_config(const std::string& path) {
                 {"quit",            &KeyMap::quit},
                 {"help",            &KeyMap::help},
                 {"cam_mode",        &KeyMap::cam_mode},
+                {"gallery",         &KeyMap::gallery},
             };
             auto it = key_fields.find(key);
             if (it != key_fields.end())
@@ -294,7 +295,7 @@ crosshair       = x
 quit            = escape
 help            = h
 cam_mode        = v
-help            = h
+gallery         = g
 
 [remote]
 # Unix socket for headless remote control (e.g. from SSH or scripts).

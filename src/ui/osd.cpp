@@ -1,4 +1,5 @@
 #include "osd.h"
+#include "gallery.h"
 #include "../util/resolution.h"
 #include <SDL2/SDL_image.h>
 #include <sys/stat.h>
@@ -532,6 +533,12 @@ void Osd::draw_tl_dialog(const OsdState& state) {
 // ---------------------------------------------------------------------------
 
 void Osd::draw(const OsdState& state) {
+    // Gallery overlay takes over the entire display.
+    if (state.gallery_open && state.gallery) {
+        gallery_render(renderer_, dw_, dh_, *state.gallery, font_);
+        return;
+    }
+
     const SDL_Color kWhite   = {255, 255, 255, 255};
     const SDL_Color kInactive = {175, 175, 175, 255};
 

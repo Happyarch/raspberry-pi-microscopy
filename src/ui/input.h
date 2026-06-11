@@ -40,6 +40,16 @@ struct InputCallbacks {
     std::function<void()>    on_cam_mode_cancel;
     // Toggle the mode list open/closed (normal dispatch, list not yet open).
     std::function<void()>    on_cam_mode_toggle;
+
+    // Gallery overlay navigation.
+    std::function<void()>    on_gallery_toggle;      // 'g': open or close
+    std::function<void()>    on_gallery_next_tab;    // Tab: cycle Stills→Timelapses→Videos
+    std::function<void()>    on_gallery_nav_left;
+    std::function<void()>    on_gallery_nav_right;
+    std::function<void()>    on_gallery_nav_up;
+    std::function<void()>    on_gallery_nav_down;
+    std::function<void()>    on_gallery_select;      // Enter: drill-in or open fullscreen
+    std::function<void()>    on_gallery_back;        // Esc: fullscreen→list, or close gallery
 };
 
 class InputHandler {
@@ -69,6 +79,10 @@ public:
     // route SDL_TEXTINPUT events and decide whether T is a tap or stop-hold.
     void set_tl_dialog_open(bool open);
     void set_tl_active(bool active);
+
+    // Tell the handler whether the gallery overlay is open so arrow keys are
+    // routed to gallery navigation instead of focus/aperture.
+    void set_gallery_open(bool open) { gallery_open_ = open; }
 
 private:
     struct BoundKey {
@@ -110,6 +124,10 @@ private:
     // Camera mode list modal state
     bool        mode_list_open_{false};
     SDL_Keycode cam_mode_sym_{SDLK_v};
+
+    // Gallery overlay state
+    bool        gallery_open_{false};
+    SDL_Keycode gallery_sym_{SDLK_g};
 
     static constexpr uint64_t kRecordHoldMs  =  500;
     static constexpr uint64_t kTlStopHoldMs = 3000;

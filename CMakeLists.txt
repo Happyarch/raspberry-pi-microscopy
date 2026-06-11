@@ -41,11 +41,13 @@ add_executable(microscopi
     src/camera/encoder.cpp
     src/ui/renderer.cpp
     src/ui/osd.cpp
+    src/ui/gallery.cpp
     src/ui/input.cpp
     src/ui/keybinding.cpp
     src/config/config.cpp
     src/util/resolution.cpp
     src/util/exif_writer.cpp
+    src/util/media_db.cpp
     src/util/socket_server.cpp
     src/util/mjpeg_server.cpp
 )
@@ -74,6 +76,7 @@ target_link_libraries(microscopi PRIVATE
     ${LIBJPEG_LIBRARIES}
     OpenSSL::SSL
     OpenSSL::Crypto
+    sqlite3
 )
 
 target_compile_options(microscopi PRIVATE

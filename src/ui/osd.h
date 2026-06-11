@@ -7,6 +7,8 @@
 #include <unordered_map>
 #include <cstdint>
 
+struct GalleryState; // defined in gallery.h
+
 struct OsdState {
     float    aperture;             // f-number; 0 = unknown/fixed
     float    exposure_us;          // microseconds
@@ -46,6 +48,10 @@ struct OsdState {
         int                        active{0};    // currently running mode index
         const std::vector<std::string>* labels{nullptr}; // non-owning
     } mode_list;
+
+    // Gallery overlay (headed mode only)
+    bool                gallery_open{false};
+    const GalleryState* gallery{nullptr};      // non-owning; set each frame when open
 };
 
 class Osd {

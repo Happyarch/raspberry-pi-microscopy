@@ -42,7 +42,7 @@ The `.deb` postinst creates the `microscopi` user, output dirs, and enables the 
 
 ### .deb runtime dependencies
 Derived from `readelf -d` on the compiled binary — update if linking changes:
-`libcamera0.5`, `libcamera-base0.5`, `libcamera-ipa`, `libsdl2-2.0-0`, `libsdl2-ttf-2.0-0`, `libsdl2-image-2.0-0`, `libavformat59`, `libavcodec59`, `libturbojpeg0`, `libssl3`, `libstdc++6`, `libgcc-s1`, `libc6`, `librsvg2-bin`, `v4l-utils`
+`libcamera0.5`, `libcamera-base0.5`, `libcamera-ipa`, `libsdl2-2.0-0`, `libsdl2-ttf-2.0-0`, `libsdl2-image-2.0-0`, `libavformat59`, `libavcodec59`, `libturbojpeg0`, `libssl3`, `libsqlite3-0`, `libstdc++6`, `libgcc-s1`, `libc6`, `librsvg2-bin`, `v4l-utils`
 
 For clangd LSP: `cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && ln -sf build/compile_commands.json compile_commands.json`
 

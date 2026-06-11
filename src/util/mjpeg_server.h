@@ -11,6 +11,8 @@
 #include <thread>
 #include <vector>
 
+class MediaDb; // defined in util/media_db.h
+
 class MjpegServer {
 public:
     // https=true requires cert_file and key_file (PEM). Falls back to HTTP on error.
@@ -36,6 +38,10 @@ public:
     // Caller must invoke reply_fn exactly once to complete the HTTP response.
     bool pop_command(std::string& cmd_out,
                      std::function<void(const std::string&)>& reply_fn);
+
+    // Attach a media database so GET /api/media/<id>[/thumb] can serve files.
+    // Both pointers are non-owning; must outlive the server.
+    void set_media_db(MediaDb* db, const std::string& thumb_cache_dir);
 
 private:
     struct YuvBuf {
@@ -79,6 +85,11 @@ private:
     // Command queue (REST → main loop)
     std::mutex cmd_mtx_;
     std::queue<PendingCmd> cmd_queue_;
+
+    // Media database — set after construction, protected by db_mtx_
+    std::mutex  db_mtx_;
+    MediaDb*    db_{nullptr};
+    std::string thumb_cache_dir_;
 
     std::atomic<bool> stopping_{false};
     std::atomic<int>  stream_count_{0};

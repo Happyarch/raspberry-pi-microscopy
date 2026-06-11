@@ -99,6 +99,7 @@ Depends: libcamera0.5,
          libavcodec59,
          libturbojpeg0,
          libssl3,
+         libsqlite3-0,
          libstdc++6,
          libgcc-s1,
          libc6,
@@ -123,7 +124,8 @@ case "$1" in
         done
         mkdir -p /home/microscopi/videos \
                  /home/microscopi/stills \
-                 /home/microscopi/.cache/microscopi
+                 /home/microscopi/.cache/microscopi/thumbs \
+                 /home/microscopi/.local/share/microscopi
         chown -R microscopi:microscopi /home/microscopi
         systemctl daemon-reload || true
         systemctl enable microscopi.service || true

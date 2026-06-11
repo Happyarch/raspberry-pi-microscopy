@@ -49,11 +49,16 @@ void InputHandler::build_bindings(const KeyMap& keys) {
     cam_mode_sym_       = (vsym != SDLK_UNKNOWN) ? vsym : SDLK_v;
     (void)vshift;
 
+    auto [gsym, gshift] = parse_key_binding(keys.gallery);
+    gallery_sym_        = (gsym != SDLK_UNKNOWN) ? gsym : SDLK_g;
+    (void)gshift;
+
     auto [tlsym, tlshift] = parse_key_binding(keys.timelapse);
     tl_sym_         = (tlsym != SDLK_UNKNOWN) ? tlsym : SDLK_t;
     tl_needs_shift_ = tlshift;
 
     add(keys.cam_mode, true, [&]{ if (cbs_.on_cam_mode_toggle) cbs_.on_cam_mode_toggle(); });
+    add(keys.gallery,  true, [&]{ if (cbs_.on_gallery_toggle)  cbs_.on_gallery_toggle(); });
 }
 
 InputHandler::InputHandler(InputCallbacks cbs, const KeyMap& keys)
@@ -115,6 +120,22 @@ bool InputHandler::process_events() {
                     if (cbs_.on_cam_mode_cancel) cbs_.on_cam_mode_cancel();
                 }
                 continue;
+            }
+
+            // ---- Gallery overlay navigation ----
+            // When the gallery is open, arrow keys and navigation keys are
+            // intercepted for tile/page navigation; other keys fall through
+            // so quit still works.
+            if (gallery_open_ && !ev.key.repeat) {
+                if (sym == SDLK_LEFT  && !shift) { if (cbs_.on_gallery_nav_left)  cbs_.on_gallery_nav_left();  continue; }
+                if (sym == SDLK_RIGHT && !shift) { if (cbs_.on_gallery_nav_right) cbs_.on_gallery_nav_right(); continue; }
+                if (sym == SDLK_UP    && !shift) { if (cbs_.on_gallery_nav_up)    cbs_.on_gallery_nav_up();    continue; }
+                if (sym == SDLK_DOWN  && !shift) { if (cbs_.on_gallery_nav_down)  cbs_.on_gallery_nav_down();  continue; }
+                if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
+                    if (cbs_.on_gallery_select) cbs_.on_gallery_select(); continue;
+                }
+                if (sym == SDLK_ESCAPE) { if (cbs_.on_gallery_back) cbs_.on_gallery_back(); continue; }
+                if (sym == SDLK_TAB && !shift) { if (cbs_.on_gallery_next_tab) cbs_.on_gallery_next_tab(); continue; }
             }
 
             // ---- Help one-shot: press once → show for kHelpShowMs ----

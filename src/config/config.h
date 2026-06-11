@@ -25,6 +25,7 @@ struct KeyMap {
     std::string quit            = "escape";  // q always acts as a secondary quit
     std::string help            = "h";       // hold 3 s to show key binding overlay
     std::string cam_mode        = "v";       // open/close camera mode list
+    std::string gallery         = "g";       // open/close media gallery
 };
 
 struct Config {
