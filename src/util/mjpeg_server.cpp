@@ -238,8 +238,8 @@ let af = true, recording = false, recStart = 0, recTick = null, tl_active = fals
 
 // --- View switching ---
 function showView(v) {
-  $('live-view').style.display    = v === 'live'    ? '' : 'none';
-  $('gallery-view').style.display = v === 'gallery' ? '' : 'none';
+  $('live-view').style.display    = v === 'live'    ? 'block' : 'none';
+  $('gallery-view').style.display = v === 'gallery' ? 'block' : 'none';
   $('nav-live').classList.toggle('active',    v === 'live');
   $('nav-gallery').classList.toggle('active', v === 'gallery');
   if (v === 'gallery') loadGallery();
