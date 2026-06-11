@@ -50,29 +50,11 @@ echo "      --initrd=/boot/initramfs-linux-fallback.img \\"
 echo '      --command-line="root=UUID=$(findmnt -n -o UUID /) rw rootfstype=ext4 irqpoll maxcpus=1 reset_devices"'
 echo "    (Or create a systemd service — see scripts/kdump.service)"
 
+# --- Helper script: load crash kernel (avoids systemd $-expansion pitfalls) ---
+install -m 0755 "$(dirname "$0")/kdump-load.sh" /usr/local/sbin/kdump-load.sh
+
 # --- Service 1: load crash kernel at normal boot (runs in primary kernel) ---
-cat > /etc/systemd/system/kdump.service << 'EOF'
-[Unit]
-Description=Load kexec crash kernel
-After=local-fs.target
-# Only meaningful if crashkernel= was passed at boot and memory was reserved.
-ConditionPathExists=/sys/kernel/kexec_crash_size
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/bin/bash -c '\
-  ROOT_UUID=$(findmnt -n -o UUID /) && \
-  cat /boot/intel-ucode.img /boot/initramfs-linux.img > /tmp/kdump-initrd.img && \
-  kexec -p /boot/vmlinuz-linux \
-    --initrd=/tmp/kdump-initrd.img \
-    --append="root=UUID=$${ROOT_UUID} rw rootfstype=ext4 \
-              irqpoll maxcpus=1 reset_devices \
-              systemd.unit=kdump-save.service"'
-
-[Install]
-WantedBy=multi-user.target
-EOF
+install -m 0644 "$(dirname "$0")/kdump.service" /etc/systemd/system/kdump.service
 
 # --- Service 2: save filtered dump (runs in crash kernel after a panic) ---
 # ConditionPathExists=/proc/vmcore is only true in the crash kernel, so this
@@ -105,6 +87,7 @@ TimeoutSec=600
 WantedBy=multi-user.target
 EOF
 
+echo "==> Wrote /usr/local/sbin/kdump-load.sh (helper script)"
 echo "==> Wrote /etc/systemd/system/kdump.service (loads crash kernel)"
 echo "==> Wrote /etc/systemd/system/kdump-save.service (saves dump on crash)"
 echo "    Enable with: sudo systemctl enable kdump.service kdump-save.service"
