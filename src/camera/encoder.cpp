@@ -155,6 +155,9 @@ struct BuiltinCtx {
     AVStream*            stream{nullptr};
     int64_t              pts{0};
     int                  width{0}, height{0}, fps{0};
+    // Input buffer tracking: fill slots 0..kInputBufs-1 before falling back to DQBUF.
+    int                  next_in_buf{0};
+    bool                 pipeline_full{false};
 };
 
 static bool v4l2_ioctl(int fd, unsigned long req, void* arg) {
@@ -306,14 +309,28 @@ bool Encoder::submit_builtin(const uint8_t* y, const uint8_t* u, const uint8_t* 
     auto* ctx = builtin_ctx_;
 
     // Find a free input buffer.
-    v4l2_buffer buf{}; v4l2_plane plane{};
-    buf.type    = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
-    buf.memory  = V4L2_MEMORY_MMAP;
-    buf.length  = 1;
-    buf.m.planes = &plane;
-    if (!v4l2_ioctl(ctx->v4l2fd, VIDIOC_DQBUF, &buf)) return false;
+    // For the first kInputBufs frames the pipeline is still filling: use each
+    // pre-allocated slot directly (DQBUF on an empty queue would fail with EINVAL).
+    // Once all slots have been queued at least once, poll for POLLOUT then DQBUF
+    // to reclaim a slot the encoder has finished consuming.
+    int in_idx;
+    if (!ctx->pipeline_full) {
+        in_idx = ctx->next_in_buf++;
+        if (ctx->next_in_buf == (int)ctx->in_bufs.size())
+            ctx->pipeline_full = true;
+    } else {
+        pollfd opfd{ctx->v4l2fd, POLLOUT, 0};
+        if (poll(&opfd, 1, 100) <= 0 || !(opfd.revents & POLLOUT)) return false;
+        v4l2_buffer tmp{}; v4l2_plane tplane{};
+        tmp.type     = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+        tmp.memory   = V4L2_MEMORY_MMAP;
+        tmp.length   = 1;
+        tmp.m.planes = &tplane;
+        if (!v4l2_ioctl(ctx->v4l2fd, VIDIOC_DQBUF, &tmp)) return false;
+        in_idx = tmp.index;
+    }
 
-    V4L2Buf& ib = ctx->in_bufs[buf.index];
+    V4L2Buf& ib = ctx->in_bufs[in_idx];
     uint8_t* dst = static_cast<uint8_t*>(ib.ptr);
     int uv_h = ctx->height / 2;
 
@@ -327,7 +344,14 @@ bool Encoder::submit_builtin(const uint8_t* y, const uint8_t* u, const uint8_t* 
     for (int r = 0; r < uv_h; ++r)
         memcpy(dst + r * (ctx->width/2), v + r * uv_stride, ctx->width/2);
 
+    v4l2_buffer buf{}; v4l2_plane plane{};
+    buf.type     = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+    buf.memory   = V4L2_MEMORY_MMAP;
+    buf.index    = in_idx;
+    buf.length   = 1;
+    buf.m.planes = &plane;
     plane.bytesused = ctx->width * ctx->height * 3 / 2;
+    plane.length    = ib.len;
     v4l2_ioctl(ctx->v4l2fd, VIDIOC_QBUF, &buf);
 
     // Drain any available encoded packets.
@@ -362,8 +386,31 @@ void Encoder::close_builtin() {
     auto* ctx = builtin_ctx_;
     if (!ctx) return;
 
+    // Stop feeding the encoder, then drain any encoded packets still in the
+    // capture queue before calling STREAMOFF (which discards them).
     int type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
     v4l2_ioctl(ctx->v4l2fd, VIDIOC_STREAMOFF, &type);
+
+    pollfd pfd{ctx->v4l2fd, POLLIN, 0};
+    while (poll(&pfd, 1, 200) > 0 && (pfd.revents & POLLIN)) {
+        v4l2_buffer obuf{}; v4l2_plane oplane{};
+        obuf.type     = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
+        obuf.memory   = V4L2_MEMORY_MMAP;
+        obuf.length   = 1;
+        obuf.m.planes = &oplane;
+        if (!v4l2_ioctl(ctx->v4l2fd, VIDIOC_DQBUF, &obuf)) break;
+        V4L2Buf& ob = ctx->out_bufs[obuf.index];
+        AVPacket* pkt = av_packet_alloc();
+        pkt->data         = static_cast<uint8_t*>(ob.ptr);
+        pkt->size         = oplane.bytesused;
+        pkt->pts          = ctx->pts++;
+        pkt->dts          = pkt->pts;
+        av_packet_rescale_ts(pkt, {1, ctx->fps}, ctx->stream->time_base);
+        pkt->stream_index = ctx->stream->index;
+        av_interleaved_write_frame(ctx->fmtctx, pkt);
+        av_packet_free(&pkt);
+    }
+
     type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
     v4l2_ioctl(ctx->v4l2fd, VIDIOC_STREAMOFF, &type);
 
