@@ -165,7 +165,27 @@
   Push (standard; works with Android and most desktops), or a lightweight custom BLE GATT
   service that advertises new files. Triggered either on demand (key binding) or
   automatically on Wi-Fi/BT connection. Would require `bluez` and `obexd` (or equivalent)
-  in the pi-gen runtime package list.
+  in the pi-gen runtime package list. Note: direct file download via the web UI is now
+  available; Bluetooth is a secondary wireless path for non-LAN use cases.
+
+## Further Investigation
+
+- [ ] **Timelapse JXL compression** — after capture completes, batch-process the per-frame
+  JPEG tmp folder into a single animated JXL using `libjxl`'s patch-based inter-frame
+  compression. Frames are processed one at a time (streaming `JxlEncoderAddImageFrame`), so
+  RAM pressure is minimal and the tmp folder survives crashes. Post-processing can run
+  in-app on timelapse stop, or be offered as a user-triggered step. Pi 3 CPU cost needs
+  benchmarking — JXL encoding is heavy on Cortex-A53. Preferred over H.264 here because
+  timelapse frame count is low and per-frame quality/fidelity matters more than bitrate.
+
+- [ ] **Custom RAW timelapse delta compression** — JXL inter-frame compression does not apply
+  to Bayer RAW data. Instead, store frame 0 as a full compressed raw payload, then store
+  subsequent frames as pixel-wise Bayer deltas compressed with zstd. Deltas for static
+  microscopy scenes cluster near zero and compress extremely well. Include periodic keyframes
+  (every ~20 frames) to bound recovery from corruption and enable random access. DNG metadata
+  (color matrices, EXIF, camera profile) is identical across frames — store once in the
+  header. Requires a small DNG Bayer-plane parser to extract raw pixel arrays before
+  differencing. Unpack tool reconstructs individual DNGs from the keyframe + delta chain.
 
 ## Further Investigation
 

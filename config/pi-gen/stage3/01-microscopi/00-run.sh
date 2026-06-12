@@ -63,5 +63,31 @@ chown -R microscopi:microscopi /home/microscopi
 apt-get remove -y userconf-pi 2>/dev/null || dpkg --remove userconf-pi 2>/dev/null || true
 EOF
 
+# ---- WiFi AP fallback (NetworkManager + avahi) ----
+# NM connection profile (must be 0600 root:root or NM ignores it)
+install -d "${ROOTFS_DIR}/etc/NetworkManager/system-connections"
+install -m 600 \
+    "${FILES_DIR}/microscopi-ap.nmconnection" \
+    "${ROOTFS_DIR}/etc/NetworkManager/system-connections/microscopi-ap.nmconnection"
+chown root:root \
+    "${ROOTFS_DIR}/etc/NetworkManager/system-connections/microscopi-ap.nmconnection"
+
+# dnsmasq host overrides — resolve microscopi.local on the AP interface
+install -d "${ROOTFS_DIR}/etc/NetworkManager/dnsmasq-shared.d"
+install -m 644 "${FILES_DIR}/nm-dnsmasq-microscopi.conf" \
+    "${ROOTFS_DIR}/etc/NetworkManager/dnsmasq-shared.d/microscopi.conf"
+
+# Fallback-AP systemd service and check script
+install -m 644 "${FILES_DIR}/microscopi-wifi-ap.service" \
+    "${ROOTFS_DIR}/etc/systemd/system/microscopi-wifi-ap.service"
+install -m 755 "${FILES_DIR}/microscopi-wifi-ap-check.sh" \
+    "${ROOTFS_DIR}/usr/local/bin/microscopi-wifi-ap-check.sh"
+
+on_chroot << EOF
+systemctl enable microscopi-wifi-ap.service
+# Enable avahi-daemon for .local mDNS on all interfaces (LAN access)
+systemctl enable avahi-daemon
+EOF
+
 # ---- boot/firmware/config.txt additions ----
 cat "${FILES_DIR}/config.txt.append" >> "${ROOTFS_DIR}/boot/firmware/config.txt"

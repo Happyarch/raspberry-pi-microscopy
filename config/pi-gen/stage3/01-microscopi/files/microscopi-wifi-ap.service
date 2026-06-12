@@ -1,0 +1,13 @@
+[Unit]
+Description=Microscopi WiFi AP fallback
+Documentation=https://github.com/microscopi/microscopi
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/microscopi-wifi-ap-check.sh
+
+[Install]
+WantedBy=multi-user.target

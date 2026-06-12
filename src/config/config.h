@@ -67,6 +67,7 @@ struct Config {
     bool        stream_https{false};  // serve HTTPS instead of HTTP
     std::string stream_cert{};        // path to PEM certificate (required when stream_https = true)
     std::string stream_key{};         // path to PEM private key  (required when stream_https = true)
+    int         download_queue_max{2}; // max simultaneous file downloads (429 when exceeded)
 
     // [timelapse]
     std::string tl_dir           {"/home/microscopi/timelapses"};

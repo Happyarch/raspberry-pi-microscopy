@@ -10,3 +10,5 @@ librsvg2-bin
 libturbojpeg0
 libssl3
 v4l-utils
+iw
+avahi-daemon
