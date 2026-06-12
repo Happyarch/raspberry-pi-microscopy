@@ -1,5 +1,6 @@
 #include "mjpeg_server.h"
 #include "media_db.h"
+#include "blurhash.h"
 
 #include <arpa/inet.h>
 #include <csignal>
@@ -92,9 +93,12 @@ select{
 #gallery-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px}
 .gcard{background:#1a1a1a;border-radius:6px;overflow:hidden;cursor:pointer;transition:background .12s}
 .gcard:hover{background:#232323}
-.gthumb{width:100%;aspect-ratio:1;background:#111;display:flex;align-items:center;justify-content:center;overflow:hidden}
-.gthumb img{width:100%;height:100%;object-fit:cover;display:block}
-.gthumb-icon{font-size:36px;color:#444}
+.gthumb{position:relative;width:100%;aspect-ratio:1;background:#111;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.gthumb canvas,.gthumb img{position:absolute;inset:0;width:100%;height:100%}
+.gthumb canvas{object-fit:cover}
+.gthumb img{object-fit:cover;opacity:0;transition:opacity .25s}
+.gthumb img.gloaded{opacity:1}
+.gthumb-icon{font-size:36px;color:#444;position:relative}
 .gmeta{padding:5px 7px 7px}
 .gname{font-size:11px;color:#bbb;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .gdate{font-size:10px;color:#555;margin-top:2px}
@@ -384,6 +388,33 @@ async function pollStatus() {
 }
 pollStatus();
 
+// ---- Blurhash decoder ----
+const _b83='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~';
+function _d83(s){return[...s].reduce((a,c)=>a*83+_b83.indexOf(c),0);}
+function _lin(v){v/=255;return v<=0.04045?v/12.92:((v+0.055)/1.055)**2.4;}
+function _srgb(v){v=Math.max(0,Math.min(1,v));return Math.round(v<=0.0031308?v*12.92*255:(1.055*v**(1/2.4)-0.055)*255);}
+function _spow(v,e){return Math.sign(v)*Math.abs(v)**e;}
+function drawBlurhash(canvas,hash){
+  if(!hash)return;
+  const sf=_d83(hash[0]),ny=Math.floor(sf/9)+1,nx=sf%9+1;
+  const maxAC=(_d83(hash[1])+1)/166;
+  const cols=[];
+  for(let i=0;i<nx*ny;i++){
+    if(i===0){const dc=_d83(hash.slice(2,6));cols.push([_lin(dc>>16),_lin((dc>>8)&255),_lin(dc&255)]);}
+    else{const ac=_d83(hash.slice(4+(i-1)*2,6+(i-1)*2));cols.push([_spow(Math.floor(ac/361)-9,2)*maxAC,_spow(Math.floor(ac/19)%19-9,2)*maxAC,_spow(ac%19-9,2)*maxAC]);}
+  }
+  const w=canvas.width,h=canvas.height,px=new Uint8ClampedArray(w*h*4);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+    let r=0,g=0,b=0;
+    for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){
+      const ba=Math.cos(Math.PI*x*i/w)*Math.cos(Math.PI*y*j/h);
+      const[cr,cg,cb]=cols[j*nx+i];r+=cr*ba;g+=cg*ba;b+=cb*ba;
+    }
+    const o=(y*w+x)*4;px[o]=_srgb(r);px[o+1]=_srgb(g);px[o+2]=_srgb(b);px[o+3]=255;
+  }
+  canvas.getContext('2d').putImageData(new ImageData(px,w,h),0,0);
+}
+
 // ---- Gallery ----
 let gTab = 'stills', gPage = 0, gLimit = 20;
 let gSessionId = null, gSessionName = '';
@@ -445,15 +476,27 @@ function renderGrid() {
 
     const isSession = 'frame_count' in item;
     if (isSession) {
-      const thumbHtml = item.first_frame_id
-        ? '<img src="/api/media/'+item.first_frame_id+'/thumb" loading="lazy" alt="">'
-        : '<span class="gthumb-icon">&#128444;</span>';
-      card.innerHTML =
-        '<div class="gthumb">'+thumbHtml+'</div>'
-        +'<div class="gmeta">'
-        +'<div class="gname">'+esc(item.session_name)+'</div>'
-        +'<div class="gdate">'+(item.started_at||'').substring(0,10)+' &middot; '+item.frame_count+' frames</div>'
-        +'</div>';
+      if (item.first_frame_id) {
+        const bh = item.first_frame_blurhash || '';
+        card.innerHTML =
+          '<div class="gthumb">'+(bh?'<canvas width="32" height="18"></canvas>':'')
+          +'<img src="/api/media/'+item.first_frame_id+'/thumb" loading="lazy" alt=""></div>'
+          +'<div class="gmeta">'
+          +'<div class="gname">'+esc(item.session_name)+'</div>'
+          +'<div class="gdate">'+(item.started_at||'').substring(0,10)+' &middot; '+item.frame_count+' frames</div>'
+          +'</div>';
+        const thumb = card.querySelector('.gthumb');
+        if (bh) drawBlurhash(thumb.querySelector('canvas'), bh);
+        const img = thumb.querySelector('img');
+        img.onload = () => { img.classList.add('gloaded'); const cv=thumb.querySelector('canvas'); if(cv) cv.style.opacity=0; };
+      } else {
+        card.innerHTML =
+          '<div class="gthumb"><span class="gthumb-icon">&#128444;</span></div>'
+          +'<div class="gmeta">'
+          +'<div class="gname">'+esc(item.session_name)+'</div>'
+          +'<div class="gdate">'+(item.started_at||'').substring(0,10)+' &middot; '+item.frame_count+' frames</div>'
+          +'</div>';
+      }
       card.onclick = () => {
         gSessionId = item.id; gSessionName = item.session_name;
         gPage = 0;
@@ -463,12 +506,18 @@ function renderGrid() {
       };
     } else {
       const isStill = item.type==='still'||item.type==='tl_frame';
+      const bh = item.blurhash || '';
       card.innerHTML =
-        '<div class="gthumb"><img src="/api/media/'+item.id+'/thumb" loading="lazy" alt=""></div>'
+        '<div class="gthumb">'+(bh?'<canvas width="32" height="18"></canvas>':'')
+        +'<img src="/api/media/'+item.id+'/thumb" loading="lazy" alt=""></div>'
         +'<div class="gmeta">'
         +'<div class="gname">'+esc(item.filename)+'</div>'
         +'<div class="gdate">'+(item.captured_at||'').substring(0,10)+'</div>'
         +'</div>';
+      const thumb = card.querySelector('.gthumb');
+      if (bh) drawBlurhash(thumb.querySelector('canvas'), bh);
+      const img = thumb.querySelector('img');
+      img.onload = () => { img.classList.add('gloaded'); const cv=thumb.querySelector('canvas'); if(cv) cv.style.opacity=0; };
       if (isStill) {
         card.onclick = () => openLightbox('/api/media/'+item.id, item.filename);
       }
@@ -1039,15 +1088,50 @@ static bool generate_video_thumb(const std::string& src, const std::string& dst,
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
+// Decode thumbnail to 32x18 RGB via ffmpeg and compute its blurhash.
+static std::string compute_thumb_blurhash(const std::string& thumb_path) {
+    constexpr int BW = 32, BH = 18;
+    int pipefd[2];
+    if (::pipe(pipefd) != 0) return "";
+    pid_t pid = ::fork();
+    if (pid < 0) { ::close(pipefd[0]); ::close(pipefd[1]); return ""; }
+    if (pid == 0) {
+        ::close(pipefd[0]);
+        ::dup2(pipefd[1], STDOUT_FILENO);
+        ::close(pipefd[1]);
+        int devnull = ::open("/dev/null", O_RDWR);
+        if (devnull >= 0) { ::dup2(devnull, STDIN_FILENO); ::dup2(devnull, STDERR_FILENO); ::close(devnull); }
+        const char* argv[] = {
+            "ffmpeg", "-i", thumb_path.c_str(),
+            "-vf", "scale=32:18", "-frames:v", "1",
+            "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1", nullptr
+        };
+        ::execvp("ffmpeg", const_cast<char* const*>(argv));
+        ::_exit(1);
+    }
+    ::close(pipefd[1]);
+    constexpr size_t kExpected = BW * BH * 3;
+    std::vector<uint8_t> rgb(kExpected);
+    size_t got = 0;
+    ssize_t n;
+    while (got < kExpected && (n = ::read(pipefd[0], rgb.data() + got, kExpected - got)) > 0)
+        got += (size_t)n;
+    ::close(pipefd[0]);
+    int status = 0;
+    ::waitpid(pid, &status, 0);
+    if (got < kExpected) return "";
+    return compute_blurhash(rgb.data(), BW, BH, 4, 3);
+}
+
 // Serve (or generate) a thumbnail for a media item.
 static void serve_thumbnail(const Conn& c, int64_t id,
                              const std::string& src_path,
-                             const std::string& thumb_dir)
+                             const std::string& thumb_dir,
+                             MediaDb* db)
 {
     std::string cache_path = thumb_dir + "/" + std::to_string(id) + ".jpg";
 
     if (::access(cache_path.c_str(), F_OK) != 0) {
-        // Generate thumbnail based on file type.
         bool is_jpg = src_path.size() >= 4 &&
                       src_path.substr(src_path.size() - 4) == ".jpg";
         bool is_mkv = src_path.size() >= 4 &&
@@ -1061,6 +1145,11 @@ static void serve_thumbnail(const Conn& c, int64_t id,
             const char kErr[] = "Thumbnail unavailable";
             send_http(c, 404, "text/plain", kErr, sizeof(kErr) - 1);
             return;
+        }
+
+        if (db) {
+            auto hash = compute_thumb_blurhash(cache_path);
+            if (!hash.empty()) db->store_blurhash(id, hash);
         }
     }
 
@@ -1235,7 +1324,7 @@ void MjpegServer::client_loop(int fd, void* ssl_vp) {
                 const char kErr[] = "Not Found";
                 send_http(c, 404, "text/plain", kErr, sizeof(kErr) - 1);
             } else if (want_thumb) {
-                serve_thumbnail(c, id, *maybe_path, tdir);
+                serve_thumbnail(c, id, *maybe_path, tdir, db);
             } else {
                 serve_file(c, *maybe_path, range_hdr);
             }

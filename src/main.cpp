@@ -117,6 +117,7 @@ static std::string serialize_json(const std::vector<MediaItem>& items) {
            + ",\"captured_at\":" + json_str(m.captured_at)
            + ",\"size_bytes\":" + std::to_string(m.size_bytes)
            + ",\"timelapse_id\":" + std::to_string(m.timelapse_id)
+           + ",\"blurhash\":" + json_str(m.blurhash)
            + "}";
     }
     j += "]";
@@ -136,6 +137,7 @@ static std::string serialize_json(const std::vector<TimelapseSession>& sessions)
            + ",\"fn_name\":" + json_str(s.fn_name)
            + ",\"frame_count\":" + std::to_string(s.frame_count)
            + ",\"first_frame_id\":" + std::to_string(s.first_frame_id)
+           + ",\"first_frame_blurhash\":" + json_str(s.first_frame_blurhash)
            + "}";
     }
     j += "]";

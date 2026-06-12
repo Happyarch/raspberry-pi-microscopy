@@ -15,6 +15,7 @@ struct MediaItem {
     std::string captured_at; // ISO8601
     int64_t     size_bytes{0};
     int64_t     timelapse_id{0}; // 0 if not a tl_frame
+    std::string blurhash;        // empty until thumbnail has been generated
 };
 
 struct TimelapseSession {
@@ -26,7 +27,8 @@ struct TimelapseSession {
     std::string fn_name;
     std::string params_json;
     int         frame_count{0};
-    int64_t     first_frame_id{0}; // media.id of the first frame, 0 if none
+    int64_t     first_frame_id{0};      // media.id of the first frame, 0 if none
+    std::string first_frame_blurhash;   // blurhash of the first frame, empty if none
 };
 
 class MediaDb {
@@ -57,6 +59,7 @@ public:
 
     // Returns nullopt if id unknown or resolved path escapes the allowed dirs.
     std::optional<std::string>    get_path_for_serving(int64_t id);
+    void                          store_blurhash(int64_t id, const std::string& hash);
 
     struct ScanResult { int added{0}; int removed{0}; };
     ScanResult               rebuild_from_disk();

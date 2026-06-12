@@ -82,6 +82,9 @@ MediaDb::MediaDb(const std::string& db_path,
     exec("PRAGMA journal_mode=WAL");
     exec("PRAGMA foreign_keys=ON");
     exec(kSchema);
+    // Idempotent migration — ignored if column already exists.
+    sqlite3_exec(db_, "ALTER TABLE media ADD COLUMN blurhash TEXT DEFAULT ''",
+                 nullptr, nullptr, nullptr);
 }
 
 MediaDb::~MediaDb() {
@@ -269,6 +272,7 @@ static MediaItem row_to_item(sqlite3_stmt* stmt) {
     item.captured_at  = s(4);
     item.size_bytes   = sqlite3_column_int64(stmt, 5);
     item.timelapse_id = sqlite3_column_int64(stmt, 6);
+    item.blurhash     = s(7);
     return item;
 }
 
@@ -286,7 +290,8 @@ static TimelapseSession row_to_session(sqlite3_stmt* stmt) {
     ts.fn_name      = s(5);
     ts.params_json  = s(6);
     ts.frame_count    = sqlite3_column_int(stmt, 7);
-    ts.first_frame_id = sqlite3_column_int64(stmt, 8);
+    ts.first_frame_id       = sqlite3_column_int64(stmt, 8);
+    ts.first_frame_blurhash = s(9);
     return ts;
 }
 
@@ -299,7 +304,7 @@ std::vector<MediaItem> MediaDb::list_stills(int offset, int limit) {
     std::vector<MediaItem> result;
     if (!db_) return result;
     const char* sql =
-        "SELECT id,type,path,filename,captured_at,size_bytes,timelapse_id"
+        "SELECT id,type,path,filename,captured_at,size_bytes,timelapse_id,COALESCE(blurhash,'')"
         " FROM media WHERE type='still' ORDER BY captured_at DESC LIMIT ? OFFSET ?";
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return result;
@@ -315,7 +320,7 @@ std::vector<MediaItem> MediaDb::list_videos(int offset, int limit) {
     std::vector<MediaItem> result;
     if (!db_) return result;
     const char* sql =
-        "SELECT id,type,path,filename,captured_at,size_bytes,timelapse_id"
+        "SELECT id,type,path,filename,captured_at,size_bytes,timelapse_id,COALESCE(blurhash,'')"
         " FROM media WHERE type='video' ORDER BY captured_at DESC LIMIT ? OFFSET ?";
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return result;
@@ -332,7 +337,8 @@ std::vector<TimelapseSession> MediaDb::list_timelapses(int offset, int limit) {
     if (!db_) return result;
     const char* sql =
         "SELECT t.id,t.session_dir,t.session_name,t.started_at,t.stopped_at,t.fn_name,t.params_json,t.frame_count,"
-        "(SELECT m.id FROM media m WHERE m.timelapse_id=t.id ORDER BY m.id ASC LIMIT 1)"
+        "(SELECT m.id FROM media m WHERE m.timelapse_id=t.id ORDER BY m.id ASC LIMIT 1),"
+        "(SELECT COALESCE(m.blurhash,'') FROM media m WHERE m.timelapse_id=t.id ORDER BY m.id ASC LIMIT 1)"
         " FROM timelapses t ORDER BY t.started_at DESC LIMIT ? OFFSET ?";
     sqlite3_stmt* stmt;
     if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return result;
@@ -348,7 +354,7 @@ std::vector<MediaItem> MediaDb::list_timelapse_frames(int64_t session_id, int of
     std::vector<MediaItem> result;
     if (!db_) return result;
     const char* sql =
-        "SELECT id,type,path,filename,captured_at,size_bytes,timelapse_id"
+        "SELECT id,type,path,filename,captured_at,size_bytes,timelapse_id,COALESCE(blurhash,'')"
         " FROM media WHERE type='tl_frame' AND timelapse_id=?"
         " ORDER BY captured_at ASC LIMIT ? OFFSET ?";
     sqlite3_stmt* stmt;
@@ -394,6 +400,18 @@ std::optional<std::string> MediaDb::get_path_for_serving(int64_t id) {
     if (under(stills_dir_) || under(video_dir_) || under(tl_dir_))
         return canon;
     return std::nullopt;
+}
+
+void MediaDb::store_blurhash(int64_t id, const std::string& hash) {
+    std::lock_guard<std::mutex> lk(mtx_);
+    if (!db_) return;
+    const char* sql = "UPDATE media SET blurhash=? WHERE id=?";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return;
+    sqlite3_bind_text (stmt, 1, hash.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 2, id);
+    sqlite3_step(stmt);
+    sqlite3_finalize(stmt);
 }
 
 // ---------------------------------------------------------------------------

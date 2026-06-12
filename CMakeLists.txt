@@ -48,6 +48,7 @@ add_executable(microscopi
     src/util/resolution.cpp
     src/util/exif_writer.cpp
     src/util/media_db.cpp
+    src/util/blurhash.cpp
     src/util/socket_server.cpp
     src/util/mjpeg_server.cpp
 )
