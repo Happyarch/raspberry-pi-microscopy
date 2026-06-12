@@ -40,22 +40,25 @@ static void check_invariants(const GalleryState& s, int dw, int dh, const char* 
 TEST(GalleryLayout, FullHD_1920x1080) {
     auto s = layout(1920, 1080);
     check_invariants(s, 1920, 1080, "1920x1080");
-    // At 1080p: tile_w = 1920/5 = 384, tiles_per_row = 5
-    EXPECT_EQ(s.tiles_per_row, 5);
-    EXPECT_EQ(s.tile_w,        384);
-    EXPECT_EQ(s.tile_h,        384);
-    // tab_h = max(28, 1080/14) = 77; usable_h = 1080 - 154 = 926; rows = 926/384 = 2
-    EXPECT_EQ(s.rows_visible,  2);
+    // tile target = min(1920/5, 1080/4) = min(384, 270) = 270
+    // tiles_per_row = 1920/270 = 7; tile_w = 1920/7 = 274
+    // tab_h = max(28, 77) = 77; usable_h = 926; rows = 926/274 = 3
+    EXPECT_EQ(s.tiles_per_row, 7);
+    EXPECT_EQ(s.tile_w,        274);
+    EXPECT_EQ(s.tile_h,        274);
+    EXPECT_EQ(s.rows_visible,  3);
 }
 
 TEST(GalleryLayout, HD_1280x720) {
     auto s = layout(1280, 720);
     check_invariants(s, 1280, 720, "1280x720");
-    EXPECT_EQ(s.tiles_per_row, 5);
-    EXPECT_EQ(s.tile_w,        256);
-    EXPECT_EQ(s.tile_h,        256);
-    // tab_h = max(28, 51) = 51; usable_h = 618; rows = 618/256 = 2
-    EXPECT_EQ(s.rows_visible, 2);
+    // tile target = min(1280/5, 720/4) = min(256, 180) = 180
+    // tiles_per_row = 1280/180 = 7; tile_w = 1280/7 = 182
+    // tab_h = max(28, 51) = 51; usable_h = 618; rows = 618/182 = 3
+    EXPECT_EQ(s.tiles_per_row, 7);
+    EXPECT_EQ(s.tile_w,        182);
+    EXPECT_EQ(s.tile_h,        182);
+    EXPECT_EQ(s.rows_visible,  3);
 }
 
 TEST(GalleryLayout, SVGA_800x600) {
@@ -117,12 +120,12 @@ TEST(GalleryLayout, ShortDisplay_RowsVisibleAtLeast1) {
 // ---------------------------------------------------------------------------
 
 TEST(GalleryLayout, FewTilesAdjustmentIncreasesPerRow) {
-    // 500x200: initial tiles_per_row=5, rows_vis=1 → 5<6 → bumped to 6.
-    // tab_h = max(28, 14) = 28; usable_h = 200-56=144; initial tile_w=100
-    // rows_vis = 144/100 = 1; 5*1=5 < 6 && 5 > 2 → ++tiles_per_row=6
+    // 500x200: tile target = min(500/5, 200/4) = min(100, 50) = 50 < 80 → clamped to 80
+    // tiles_per_row = 500/80 = 6; tile_w = 500/6 = 83
+    // tab_h = max(28, 14) = 28; usable_h = 200-56=144; rows_vis = 144/83 = 1
+    // 6*1=6 → adjustment not needed; tiles_per_row stays 6.
     auto s = layout(500, 200);
     check_invariants(s, 500, 200, "500x200 (adjustment)");
-    // After adjustment tiles_per_row should be 6.
     EXPECT_EQ(s.tiles_per_row, 6);
 }
 

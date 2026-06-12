@@ -16,8 +16,9 @@ void gallery_compute_layout(GalleryState& state, int dw, int dh) {
     int tab_h = std::max(28, dh / 14);
     int usable_h = dh - tab_h * 2; // two bars: tab bar + bottom padding
 
-    // Aim for tiles ~1/5 of display width wide.
-    int tile_w = dw / 5;
+    // Target tile size: cap by both width (1/5 of dw) and height (1/4 of dh)
+    // so that taller displays don't end up with fewer rows than shorter ones.
+    int tile_w = std::min(dw / 5, dh / 4);
     if (tile_w < 80) tile_w = 80;
 
     int tiles_per_row = dw / tile_w;
@@ -36,6 +37,7 @@ void gallery_compute_layout(GalleryState& state, int dw, int dh) {
         tile_w   = dw / tiles_per_row;
         tile_h   = tile_w;
         rows_vis = usable_h / tile_h;
+        if (rows_vis < 1) rows_vis = 1; // re-clamp after adjustment
     }
 
     state.tiles_per_row = tiles_per_row;

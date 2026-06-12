@@ -34,8 +34,8 @@ TEST(ConfigDefaults, EmptyPath) {
 
 TEST(ConfigDefaults, DefaultKeyMap) {
     Config c = load_config("");
-    EXPECT_EQ(c.keys.mode_cycle_fwd,  "t");
-    EXPECT_EQ(c.keys.mode_cycle_back, "shift+t");
+    EXPECT_EQ(c.keys.mode_cycle_fwd,  "c");
+    EXPECT_EQ(c.keys.mode_cycle_back, "shift+c");
     EXPECT_EQ(c.keys.focus_up,        "up");
     EXPECT_EQ(c.keys.focus_down,      "down");
     EXPECT_EQ(c.keys.quit,            "escape");
@@ -103,7 +103,7 @@ TEST(ConfigParsing, KeysSection) {
     EXPECT_EQ(c.keys.focus_down,     "s");
     EXPECT_EQ(c.keys.quit,           "q");
     // Unspecified keys keep defaults.
-    EXPECT_EQ(c.keys.mode_cycle_back, "shift+t");
+    EXPECT_EQ(c.keys.mode_cycle_back, "shift+c");
 }
 
 // ---------------------------------------------------------------------------
