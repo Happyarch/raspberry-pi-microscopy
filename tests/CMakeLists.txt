@@ -64,27 +64,45 @@ add_test(NAME socket_server COMMAND test_socket_server)
 
 # ---------------------------------------------------------------------------
 # test_mjpeg_server — exercises the HTTP-MJPEG server (libjpeg-turbo + OpenSSL)
+# mjpeg_server.cpp also calls into blurhash.cpp and media_db.cpp (sqlite3).
 # ---------------------------------------------------------------------------
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBJPEG REQUIRED libturbojpeg)
 find_package(OpenSSL REQUIRED)
 
-add_executable(test_mjpeg_server
-    test_mjpeg_server.cpp
-    ${CMAKE_SOURCE_DIR}/src/util/mjpeg_server.cpp
-)
-target_include_directories(test_mjpeg_server PRIVATE
-    ${CMAKE_SOURCE_DIR}/src
-    ${LIBJPEG_INCLUDE_DIRS}
-    ${OPENSSL_INCLUDE_DIR}
-)
-target_link_libraries(test_mjpeg_server PRIVATE
-    GTest::gtest_main
-    ${LIBJPEG_LIBRARIES}
-    OpenSSL::SSL
-    OpenSSL::Crypto
-)
-add_test(NAME mjpeg_server COMMAND test_mjpeg_server)
+find_package(SQLite3 QUIET)
+if(NOT SQLite3_FOUND)
+    pkg_check_modules(SQLITE3 QUIET sqlite3)
+    if(SQLITE3_FOUND)
+        set(SQLite3_LIBRARIES ${SQLITE3_LIBRARIES})
+        set(SQLite3_INCLUDE_DIRS ${SQLITE3_INCLUDE_DIRS})
+    endif()
+endif()
+
+if(SQLite3_FOUND OR SQLITE3_FOUND)
+    add_executable(test_mjpeg_server
+        test_mjpeg_server.cpp
+        ${CMAKE_SOURCE_DIR}/src/util/mjpeg_server.cpp
+        ${CMAKE_SOURCE_DIR}/src/util/blurhash.cpp
+        ${CMAKE_SOURCE_DIR}/src/util/media_db.cpp
+    )
+    target_include_directories(test_mjpeg_server PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${LIBJPEG_INCLUDE_DIRS}
+        ${OPENSSL_INCLUDE_DIR}
+        ${SQLite3_INCLUDE_DIRS}
+    )
+    target_link_libraries(test_mjpeg_server PRIVATE
+        GTest::gtest_main
+        ${LIBJPEG_LIBRARIES}
+        OpenSSL::SSL
+        OpenSSL::Crypto
+        ${SQLite3_LIBRARIES}
+    )
+    add_test(NAME mjpeg_server COMMAND test_mjpeg_server)
+else()
+    message(STATUS "sqlite3 not found — skipping test_mjpeg_server")
+endif()
 
 # ---------------------------------------------------------------------------
 # test_timelapse — exercises interval schedule functions (header-only, no deps)
@@ -160,6 +178,7 @@ if((SQLite3_FOUND OR SQLITE3_FOUND) AND LIBJPEG_FOUND AND OpenSSL_FOUND)
     add_executable(test_mjpeg_media
         test_mjpeg_media.cpp
         ${CMAKE_SOURCE_DIR}/src/util/mjpeg_server.cpp
+        ${CMAKE_SOURCE_DIR}/src/util/blurhash.cpp
         ${CMAKE_SOURCE_DIR}/src/util/media_db.cpp
     )
     target_include_directories(test_mjpeg_media PRIVATE
