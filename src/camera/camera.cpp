@@ -144,6 +144,10 @@ void Camera::stop() {
     running_ = false;
     cam_->stop();
     cam_->requestCompleted.disconnect(this, &Camera::request_complete);
+    {
+        std::lock_guard<std::mutex> lk(frame_mutex_);
+        while (!ready_frames_.empty()) ready_frames_.pop();
+    }
     requests_.clear();
     still_pending_req_.reset();
     if (allocator_) { delete allocator_; allocator_ = nullptr; }
@@ -291,8 +295,18 @@ std::vector<CameraMode> Camera::get_modes() const {
             modes.push_back({(int)sz.width, (int)sz.height});
     }
 
-    // Largest resolution first.
-    std::sort(modes.begin(), modes.end(), [](const CameraMode& a, const CameraMode& b) {
+    // Sort: 16:10 → 16:9 → 4:3 → other, largest pixels first within each group.
+    auto aspect_group = [](int w, int h) -> int {
+        double r = (double)w / h;
+        if (r >= 1.55 && r < 1.65) return 0; // 16:10
+        if (r >= 1.70 && r < 1.85) return 1; // 16:9
+        if (r >= 1.28 && r < 1.40) return 2; // 4:3
+        return 3;
+    };
+    std::sort(modes.begin(), modes.end(), [&](const CameraMode& a, const CameraMode& b) {
+        int ga = aspect_group(a.width, a.height);
+        int gb = aspect_group(b.width, b.height);
+        if (ga != gb) return ga < gb;
         return (a.width * a.height) > (b.width * b.height);
     });
     return modes;

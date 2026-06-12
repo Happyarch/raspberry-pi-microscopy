@@ -315,8 +315,23 @@ async function loadCamModes() {
     const modes = JSON.parse(txt);
     const sel = $('cam-mode-sel');
     if (!modes || !modes.length) return;
-    sel.innerHTML = modes.map(m =>
-      '<option value="'+m.index+'">'+esc(m.label)+'</option>').join('');
+    function arGroup(w, h) {
+      const r = w / h;
+      if (r >= 1.55 && r < 1.65) return '16:10';
+      if (r >= 1.70 && r < 1.85) return '16:9';
+      if (r >= 1.28 && r < 1.40) return '4:3';
+      return 'Other';
+    }
+    const groups = {}, order = ['16:10','16:9','4:3','Other'];
+    for (const m of modes) { const g = arGroup(m.width, m.height); (groups[g]=groups[g]||[]).push(m); }
+    let html = '';
+    for (const g of order) {
+      if (!groups[g]) continue;
+      html += '<optgroup label="'+esc(g)+'">';
+      for (const m of groups[g]) html += '<option value="'+m.index+'">'+esc(m.label)+'</option>';
+      html += '</optgroup>';
+    }
+    sel.innerHTML = html;
   } catch(e) {}
 }
 function setCamMode(idx) {
@@ -924,8 +939,23 @@ async function loadCamModes() {
     const modes = JSON.parse(txt);
     const sel = $('cam-mode-sel');
     if (!modes || !modes.length) return;
-    sel.innerHTML = modes.map(m =>
-      '<option value="'+m.index+'">'+esc(m.label)+'</option>').join('');
+    function arGroup(w, h) {
+      const r = w / h;
+      if (r >= 1.55 && r < 1.65) return '16:10';
+      if (r >= 1.70 && r < 1.85) return '16:9';
+      if (r >= 1.28 && r < 1.40) return '4:3';
+      return 'Other';
+    }
+    const groups = {}, order = ['16:10','16:9','4:3','Other'];
+    for (const m of modes) { const g = arGroup(m.width, m.height); (groups[g]=groups[g]||[]).push(m); }
+    let html = '';
+    for (const g of order) {
+      if (!groups[g]) continue;
+      html += '<optgroup label="'+esc(g)+'">';
+      for (const m of groups[g]) html += '<option value="'+m.index+'">'+esc(m.label)+'</option>';
+      html += '</optgroup>';
+    }
+    sel.innerHTML = html;
   } catch(e) {}
 }
 function setCamMode(idx) {

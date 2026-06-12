@@ -1055,7 +1055,9 @@ int main() {
                 for (int i = 0; i < (int)cam_modes.size(); ++i) {
                     if (i) j += ",";
                     j += "{\"index\":" + std::to_string(i)
-                       + ",\"label\":" + json_str(cam_mode_labels[i]) + "}";
+                       + ",\"label\":" + json_str(cam_mode_labels[i])
+                       + ",\"width\":"  + std::to_string(cam_modes[i].width)
+                       + ",\"height\":" + std::to_string(cam_modes[i].height) + "}";
                 }
                 j += "]";
                 return j;
@@ -1071,6 +1073,8 @@ int main() {
                 try { idx = std::stoi(args[2]); } catch (...) { return "ERR invalid index"; }
                 if (idx < 0 || idx >= (int)cam_modes.size()) return "ERR index out of range";
                 if (idx == cam_mode_active) return "OK (already active)";
+                if (recording) return "ERR cannot switch mode while recording";
+                if (tl_active)  return "ERR cannot switch mode during timelapse";
                 const CameraMode& m = cam_modes[idx];
                 if (!camera.restart_with_mode(m)) return "ERR mode switch failed";
                 if (renderer) renderer->update_texture_size(camera.width(), camera.height());
