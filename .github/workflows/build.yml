@@ -21,12 +21,51 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build ARM64 binary
-        run: ./scripts/build-app.sh
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: buildx-${{ hashFiles('docker/Dockerfile.build') }}-${{ github.sha }}
+          restore-keys: |
+            buildx-${{ hashFiles('docker/Dockerfile.build') }}-
+
+      - name: Build ARM64 binary and .deb
+        run: |
+          JOBS=$(( $(nproc) > 16 ? $(nproc) - 16 : $(nproc) ))
+          docker buildx build \
+            --platform linux/arm64 \
+            --tag microscopi-builder:latest \
+            --file docker/Dockerfile.build \
+            --build-arg JOBS="${JOBS}" \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --provenance=false \
+            --load \
+            .
+
+      - name: Rotate cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      - name: Extract artifacts from image
+        run: |
+          mkdir -p deploy/install/usr/local
+          CONTAINER=$(docker create --platform linux/arm64 microscopi-builder:latest)
+          docker cp "$CONTAINER:/install/usr/local/." deploy/install/usr/local/
+          docker cp "$CONTAINER:/output/." deploy/
+          docker rm "$CONTAINER"
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: microscopi-arm64-${{ github.sha }}
           path: deploy/install/usr/local/bin/microscopi
+          retention-days: 14
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: microscopi-deb-${{ github.sha }}
+          path: deploy/microscopi_*_arm64.deb
           retention-days: 14

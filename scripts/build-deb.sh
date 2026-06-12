@@ -33,10 +33,15 @@ done
 }
 
 # --- Version ---
-# Produces e.g. "1.2.3", "1.2.3.4.gabc1234", or "0.0.gabc1234"
-VERSION=$(git -C "$REPO_ROOT" describe --tags --always 2>/dev/null \
-    | sed 's/^v//; s/-/./g' \
-    || date +%Y%m%d)
+# Prefer the VERSION file; fall back to git describe; last resort: date.
+# Dashes are replaced with dots to satisfy dpkg version syntax.
+if [[ -f "$REPO_ROOT/VERSION" ]]; then
+    VERSION=$(tr -d '[:space:]' < "$REPO_ROOT/VERSION" | sed 's/^v//; s/-/./g')
+else
+    VERSION=$(git -C "$REPO_ROOT" describe --tags --always 2>/dev/null \
+        | sed 's/^v//; s/-/./g' \
+        || date +%Y%m%d)
+fi
 
 PKG_NAME="microscopi"
 ARCH="arm64"

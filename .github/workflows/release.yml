@@ -1,0 +1,145 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  # ── 1. Build the ARM64 binary and .deb ────────────────────────────────────
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU (ARM64 binfmt)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: buildx-${{ hashFiles('docker/Dockerfile.build') }}-${{ github.sha }}
+          restore-keys: |
+            buildx-${{ hashFiles('docker/Dockerfile.build') }}-
+
+      - name: Build ARM64 binary and .deb
+        run: |
+          JOBS=$(( $(nproc) > 16 ? $(nproc) - 16 : $(nproc) ))
+          docker buildx build \
+            --platform linux/arm64 \
+            --tag microscopi-builder:latest \
+            --file docker/Dockerfile.build \
+            --build-arg JOBS="${JOBS}" \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --provenance=false \
+            --load \
+            .
+
+      - name: Rotate cache
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      - name: Extract artifacts from image
+        run: |
+          mkdir -p deploy/install/usr/local
+          CONTAINER=$(docker create --platform linux/arm64 microscopi-builder:latest)
+          docker cp "$CONTAINER:/install/usr/local/." deploy/install/usr/local/
+          docker cp "$CONTAINER:/output/." deploy/
+          docker rm "$CONTAINER"
+
+      - name: Upload install tree (needed by image job)
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-tree
+          path: deploy/install/
+          retention-days: 1
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-package
+          path: deploy/microscopi_*_arm64.deb
+          retention-days: 7
+
+  # ── 2. Build the full Raspberry Pi OS image ───────────────────────────────
+  image:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup
+          sudo docker image prune -af
+          df -h
+
+      - name: Download install tree
+        uses: actions/download-artifact@v4
+        with:
+          name: install-tree
+          path: deploy/install/
+
+      - name: Fix binary permissions
+        run: chmod +x deploy/install/usr/local/bin/microscopi
+
+      - name: Build Pi OS image
+        run: ./scripts/build-image.sh
+
+      - name: Upload Pi image
+        uses: actions/upload-artifact@v4
+        with:
+          name: pi-image
+          path: deploy/pi-gen/deploy/*.img.xz
+          retention-days: 7
+
+  # ── 3. Create GitHub release and attach all artifacts ─────────────────────
+  release:
+    needs: [build, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download .deb
+        uses: actions/download-artifact@v4
+        with:
+          name: deb-package
+          path: dist/
+
+      - name: Download Pi image
+        uses: actions/download-artifact@v4
+        with:
+          name: pi-image
+          path: dist/
+
+      - name: Read version
+        id: ver
+        run: echo "version=$(cat VERSION | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "v${{ steps.ver.outputs.version }}" \
+            --notes "Release ${{ steps.ver.outputs.version }}" \
+            dist/microscopi_*_arm64.deb \
+            dist/*.img.xz

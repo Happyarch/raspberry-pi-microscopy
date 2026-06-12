@@ -19,6 +19,7 @@ docker buildx build \
     --tag "$IMAGE_TAG" \
     --file "$REPO_ROOT/docker/Dockerfile.build" \
     --build-arg JOBS="${JOBS}" \
+    --provenance=false \
     --load \
     "$REPO_ROOT"
 
