@@ -402,6 +402,24 @@ std::optional<std::string> MediaDb::get_path_for_serving(int64_t id) {
     return std::nullopt;
 }
 
+std::optional<TimelapseSession> MediaDb::get_timelapse_session(int64_t id) {
+    std::lock_guard<std::mutex> lk(mtx_);
+    if (!db_) return std::nullopt;
+    const char* sql =
+        "SELECT t.id,t.session_dir,t.session_name,t.started_at,t.stopped_at,t.fn_name,t.params_json,t.frame_count,"
+        "(SELECT m.id FROM media m WHERE m.timelapse_id=t.id ORDER BY m.id ASC LIMIT 1),"
+        "(SELECT COALESCE(m.blurhash,'') FROM media m WHERE m.timelapse_id=t.id ORDER BY m.id ASC LIMIT 1)"
+        " FROM timelapses t WHERE t.id=?";
+    sqlite3_stmt* stmt;
+    if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return std::nullopt;
+    sqlite3_bind_int64(stmt, 1, id);
+    std::optional<TimelapseSession> result;
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+        result = row_to_session(stmt);
+    sqlite3_finalize(stmt);
+    return result;
+}
+
 void MediaDb::store_blurhash(int64_t id, const std::string& hash) {
     std::lock_guard<std::mutex> lk(mtx_);
     if (!db_) return;

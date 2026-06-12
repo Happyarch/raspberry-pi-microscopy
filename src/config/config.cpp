@@ -135,8 +135,9 @@ Config load_config(const std::string& path) {
             else if (key == "stream_scale")   c.stream_scale   = parse_float(key, val, c.stream_scale);
             else if (key == "stream_fps")     c.stream_fps     = parse_int  (key, val, c.stream_fps);
             else if (key == "stream_https")   c.stream_https   = parse_bool (key, val, c.stream_https);
-            else if (key == "stream_cert")    c.stream_cert    = val;
-            else if (key == "stream_key")     c.stream_key     = val;
+            else if (key == "stream_cert")           c.stream_cert           = val;
+            else if (key == "stream_key")            c.stream_key            = val;
+            else if (key == "download_queue_max")    c.download_queue_max    = parse_int(key, val, c.download_queue_max);
         } else if (section == "timelapse") {
             if      (key == "tl_dir")           c.tl_dir           = val;
             else if (key == "tl_base_ms")       c.tl_base_ms       = (uint64_t)parse_int(key, val, (int)c.tl_base_ms);
@@ -330,6 +331,10 @@ stream_fps = 15
 stream_https = false
 stream_cert  =
 stream_key   =
+
+# Maximum number of simultaneous file downloads served to web clients.
+# Requests over this limit receive HTTP 429. Default 2 is safe on a Pi 3.
+download_queue_max = 2
 
 [timelapse]
 # Root directory for timelapse sessions. Each run creates a subdirectory named

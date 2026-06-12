@@ -39,9 +39,12 @@ public:
     bool pop_command(std::string& cmd_out,
                      std::function<void(const std::string&)>& reply_fn);
 
-    // Attach a media database so GET /api/media/<id>[/thumb] can serve files.
+    // Attach a media database so GET /api/media/<id>[/thumb] and download routes can serve files.
     // Both pointers are non-owning; must outlive the server.
     void set_media_db(MediaDb* db, const std::string& thumb_cache_dir);
+
+    // Set the maximum number of concurrent file downloads (default 2). Excess requests get 429.
+    void set_download_queue_max(int n) { download_queue_max_.store(n, std::memory_order_relaxed); }
 
 private:
     struct YuvBuf {
@@ -93,6 +96,8 @@ private:
 
     std::atomic<bool> stopping_{false};
     std::atomic<int>  stream_count_{0};
+    std::atomic<int>  active_downloads_{0};
+    std::atomic<int>  download_queue_max_{2};
     std::thread encode_thread_;
     std::thread listen_thread_;
 };

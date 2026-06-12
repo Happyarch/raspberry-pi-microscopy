@@ -67,6 +67,15 @@ scripts/         Build, image, flash scripts
 - Video is saved as **MKV** (crash-recoverable).
 - The `video_backend` config key selects `builtin` (V4L2 + libavformat) or `ffmpeg` (subprocess pipe with configurable command).
 - Still capture currently saves the viewfinder frame as JPEG. Full-resolution StillCapture is in TODO.md.
+- The web UI detects the client's `User-Agent` and serves a mobile-optimised HTML (FABs, drawer, bottom nav) for phones/tablets, and the full desktop grid for laptops/desktops.
+- Timelapse sessions are served as `.tar.gz` via a forked `tar` subprocess piped directly to the HTTP socket (no temp file, no new library dependency).
+- The download semaphore (`active_downloads_` atomic + `download_queue_max` config key) protects the Pi from simultaneous large downloads.
+- WiFi AP fallback: a systemd oneshot service (`microscopi-wifi-ap.service`) starts a NetworkManager AP connection (`microscopi-ap.nmconnection`) 45 s after boot if `wlan0` is not associated. The AP is open (no password), SSID `Microscopi`, IP `192.168.42.1`. NM's dnsmasq resolves `microscopi.local` for clients on the AP. Avahi handles `microscopi.local` on a normal LAN.
+
+## pi-gen runtime packages (new additions)
+- `iw` — used by the WiFi AP fallback script to detect wlan0 association
+- `avahi-daemon` — mDNS for `microscopi.local` on LAN
+- `dnsmasq` — pulled in by NM as a dependency; also used by NM's `ipv4.method=shared` AP mode
 
 ## Pi user account
 The Pi user is `microscopi` (not `pi`). SSH and scp target `microscopi@192.168.1.220`.

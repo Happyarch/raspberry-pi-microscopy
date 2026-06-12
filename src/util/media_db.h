@@ -58,7 +58,9 @@ public:
     std::vector<MediaItem>        list_timelapse_frames(int64_t session_id, int offset, int limit);
 
     // Returns nullopt if id unknown or resolved path escapes the allowed dirs.
-    std::optional<std::string>    get_path_for_serving(int64_t id);
+    std::optional<std::string>       get_path_for_serving(int64_t id);
+    // Returns nullopt if session id is unknown.
+    std::optional<TimelapseSession>  get_timelapse_session(int64_t id);
     void                          store_blurhash(int64_t id, const std::string& hash);
 
     struct ScanResult { int added{0}; int removed{0}; };

@@ -26,9 +26,30 @@
 #include <turbojpeg.h>
 
 // ---------------------------------------------------------------------------
-// Embedded web UI — keep in sync with assets/web/index.html
+// UA classification helpers
 // ---------------------------------------------------------------------------
-static const char kWebUiHtml[] = R"HTML(<!DOCTYPE html>
+
+static bool ua_contains(const std::string& ua, const char* needle) {
+    std::string lo = ua;
+    for (char& c : lo) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return lo.find(needle) != std::string::npos;
+}
+
+// Returns true for phones (iPhone, Android Chrome, etc.)
+static bool is_mobile_ua(const std::string& ua) {
+    return ua_contains(ua, "mobile");
+}
+
+// Returns true for tablets (iPad, Android tablets without "mobile" in UA)
+static bool is_tablet_ua(const std::string& ua) {
+    return ua_contains(ua, "ipad") ||
+           (ua_contains(ua, "android") && !ua_contains(ua, "mobile"));
+}
+
+// ---------------------------------------------------------------------------
+// Embedded web UI — Desktop version
+// ---------------------------------------------------------------------------
+static const char kWebUiHtmlDesktop[] = R"HTML(<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -114,6 +135,9 @@ select{
 #lb-img{position:relative;max-width:95vw;max-height:88vh;object-fit:contain}
 #lb-close{position:absolute;top:10px;right:16px;background:none;border:none;color:#fff;font-size:30px;cursor:pointer;line-height:1;width:auto;padding:0}
 #lb-caption{position:absolute;bottom:8px;left:0;right:0;text-align:center;font-size:12px;color:#aaa;pointer-events:none}
+/* Download button on gallery cards */
+.dl-btn{display:block;text-align:center;background:#2a2a2a;color:#5af;border:1px solid #333;border-radius:4px;padding:3px 0;font-size:11px;margin:4px 7px 5px;text-decoration:none;cursor:pointer}
+.dl-btn:hover{background:#333}
 </style>
 </head>
 <body>
@@ -200,6 +224,13 @@ select{
     </div>
 
     <div class="grp">
+      <h3>Camera Mode</h3>
+      <select id="cam-mode-sel" onchange="setCamMode(this.value)">
+        <option value="0">Loading…</option>
+      </select>
+    </div>
+
+    <div class="grp">
       <h3>Timelapse</h3>
       <button id="btn-tl" onclick="toggleTl()">&#9654; Start</button>
       <div id="tl-status" style="font-size:11px;color:#888;margin-top:5px;min-height:14px"></div>
@@ -276,6 +307,23 @@ function toggleAf() {
 }
 function setIso(v) { cmd(v==='auto'?'iso auto':'iso '+v); }
 function setShutter(us) { cmd('shutter '+us); }
+
+// Camera mode selector
+async function loadCamModes() {
+  try {
+    const txt = await cmd('cam_mode list');
+    const modes = JSON.parse(txt);
+    const sel = $('cam-mode-sel');
+    if (!modes || !modes.length) return;
+    sel.innerHTML = modes.map(m =>
+      '<option value="'+m.index+'">'+esc(m.label)+'</option>').join('');
+  } catch(e) {}
+}
+function setCamMode(idx) {
+  msg('Switching camera mode…');
+  cmd('cam_mode set ' + idx).then(r => msg(r));
+}
+loadCamModes();
 
 // Focus slider with debounce
 let fTimer = null;
@@ -386,6 +434,10 @@ async function pollStatus() {
     const m = (st.mode||'P').toLowerCase();
     ['p','a','s','m'].forEach(x => $('m'+x).classList.toggle('on', x===m));
 
+    const sel = $('cam-mode-sel');
+    if (st.cam_mode_index != null && !sel.matches(':focus') && sel.options.length > st.cam_mode_index)
+      sel.value = st.cam_mode_index;
+
   } catch(e) {}
   setTimeout(pollStatus, 500);
 }
@@ -487,6 +539,7 @@ function renderGrid() {
           +'<div class="gmeta">'
           +'<div class="gname">'+esc(item.session_name)+'</div>'
           +'<div class="gdate">'+(item.started_at||'').substring(0,10)+' &middot; '+item.frame_count+' frames</div>'
+          +'<a class="dl-btn" href="/api/download/session/'+item.id+'" download>&#8659; Download ZIP</a>'
           +'</div>';
         const thumb = card.querySelector('.gthumb');
         if (bh) drawBlurhash(thumb.querySelector('canvas'), bh);
@@ -498,6 +551,7 @@ function renderGrid() {
           +'<div class="gmeta">'
           +'<div class="gname">'+esc(item.session_name)+'</div>'
           +'<div class="gdate">'+(item.started_at||'').substring(0,10)+' &middot; '+item.frame_count+' frames</div>'
+          +'<a class="dl-btn" href="/api/download/session/'+item.id+'" download>&#8659; Download ZIP</a>'
           +'</div>';
       }
       card.onclick = () => {
@@ -516,11 +570,14 @@ function renderGrid() {
         +'<div class="gmeta">'
         +'<div class="gname">'+esc(item.filename)+'</div>'
         +'<div class="gdate">'+(item.captured_at||'').substring(0,10)+'</div>'
+        +'<a class="dl-btn" href="/api/download/'+item.id+'" download="'+esc(item.filename)+'">&#8659; Download</a>'
         +'</div>';
       const thumb = card.querySelector('.gthumb');
       if (bh) drawBlurhash(thumb.querySelector('canvas'), bh);
       const img = thumb.querySelector('img');
       img.onload = () => { img.classList.add('gloaded'); const cv=thumb.querySelector('canvas'); if(cv) cv.style.opacity=0; };
+      // Prevent lightbox when clicking the download link
+      card.querySelector('.dl-btn').addEventListener('click', e => e.stopPropagation());
       if (isStill) {
         card.onclick = () => openLightbox('/api/media/'+item.id, item.filename);
       }
@@ -528,6 +585,588 @@ function renderGrid() {
     grid.appendChild(card);
   }
 
+  $('prev-btn').disabled = gPage === 0;
+  $('next-btn').disabled = gItems.length < gLimit;
+  $('page-info').textContent = 'Page '+(gPage+1);
+}
+
+async function doScan() {
+  $('scan-btn').disabled = true;
+  $('scan-btn').textContent = 'Scanning…';
+  const r = await cmd('gallery scan');
+  $('scan-btn').disabled = false;
+  $('scan-btn').textContent = 'Scan';
+  try {
+    const j = JSON.parse(r);
+    msg('Scan complete: +'+j.added+' added, -'+j.removed+' removed');
+  } catch(e) { msg(r); }
+  loadGallery();
+}
+
+function openLightbox(src, name) {
+  $('lb-img').src = src;
+  $('lb-caption').textContent = name;
+  $('lightbox').style.display = 'flex';
+}
+function closeLightbox() {
+  $('lightbox').style.display = 'none';
+  $('lb-img').src = '';
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && $('lightbox').style.display !== 'none') closeLightbox();
+});
+</script>
+</body>
+</html>)HTML";
+
+// ---------------------------------------------------------------------------
+// Embedded web UI — Mobile / Tablet version
+// ---------------------------------------------------------------------------
+static const char kWebUiHtmlMobile[] = R"HTML(<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Microscopi</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{background:#111;color:#ddd;font-family:system-ui,sans-serif;font-size:15px;user-select:none;display:flex;flex-direction:column}
+/* Live view fills all space above the bottom bar */
+#live-view{display:flex;flex-direction:column;flex:1;min-height:0;position:relative}
+#viewer{flex:1;position:relative;background:#000;min-height:0;overflow:hidden}
+#stream{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block}
+/* OSD */
+#osd{
+  position:absolute;bottom:0;left:0;right:0;
+  background:rgba(0,0,0,.65);padding:6px 12px;
+  display:flex;gap:14px;align-items:center;flex-wrap:wrap;
+  font-size:13px;font-family:'Roboto Condensed','Arial Narrow',monospace
+}
+.oitem{display:flex;flex-direction:column;align-items:center;gap:1px}
+.oitem .lbl{font-size:10px;text-transform:uppercase;color:#666;letter-spacing:.06em}
+.oitem .val{color:#fff;font-weight:500}
+.oitem .val.dim{color:#666}
+#rec{margin-left:auto;color:#f44;font-weight:700;display:none}
+/* FAB row — action buttons above the bottom nav */
+#fab-row{
+  display:flex;gap:10px;padding:8px 12px;background:#161616;
+  border-top:1px solid #2a2a2a;flex-shrink:0
+}
+.fab{
+  flex:1;background:#2a2a2a;color:#ccc;border:1px solid #333;border-radius:8px;
+  padding:10px 6px;cursor:pointer;font-size:14px;min-height:44px;
+  transition:background .1s;display:flex;align-items:center;justify-content:center;gap:5px
+}
+.fab:hover{background:#333}
+.fab:active{background:#444}
+.fab.rec-on{background:#5c1a1a;border-color:#8a3030;color:#faa}
+.fab.tl-on{background:#3a2e00;border-color:#7a5e00;color:#fca}
+/* Status message */
+#msg{padding:4px 12px;min-height:20px;font-size:12px;color:#888;flex-shrink:0;background:#161616}
+/* Bottom nav */
+#bottomnav{
+  display:flex;background:#1a1a1a;border-top:1px solid #2a2a2a;
+  flex-shrink:0;padding-bottom:env(safe-area-inset-bottom,0)
+}
+.bnav-btn{
+  flex:1;background:none;border:none;color:#666;font-size:12px;
+  padding:10px 0;cursor:pointer;display:flex;flex-direction:column;
+  align-items:center;gap:3px;min-height:52px
+}
+.bnav-btn .bicon{font-size:20px}
+.bnav-btn.active{color:#fff}
+/* Slide-up controls drawer */
+#drawer-handle{
+  text-align:center;padding:6px;font-size:11px;color:#555;cursor:pointer;
+  background:#1a1a1a;border-top:1px solid #2a2a2a;flex-shrink:0;letter-spacing:.06em
+}
+#ctrl{
+  background:#1a1a1a;overflow-y:auto;flex-shrink:0;
+  max-height:0;transition:max-height .3s ease;
+}
+#ctrl.open{max-height:50vh}
+#ctrl-inner{padding:10px;display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+.grp{background:#222;border-radius:6px;padding:9px}
+.grp h3{font-size:10px;text-transform:uppercase;color:#555;letter-spacing:.09em;margin-bottom:7px}
+button{
+  background:#2a2a2a;color:#ccc;border:1px solid #333;border-radius:6px;
+  padding:10px 8px;cursor:pointer;font-size:14px;width:100%;margin-top:5px;
+  transition:background .1s;min-height:44px
+}
+button:hover{background:#333}
+button:active{background:#444}
+button.on{background:#1a5c30;border-color:#2a8a50;color:#7fc}
+.row{display:flex;gap:5px}
+.row button{flex:1}
+input[type=range]{width:100%;margin:6px 0;accent-color:#4af;cursor:pointer}
+select{
+  width:100%;background:#2a2a2a;color:#ccc;border:1px solid #333;
+  border-radius:6px;padding:8px;font-size:14px;margin-top:5px;cursor:pointer
+}
+.numrow{display:flex;align-items:center;gap:6px;margin-top:5px}
+.numrow label{font-size:12px;color:#666;white-space:nowrap}
+.numrow input{flex:1;background:#2a2a2a;color:#ccc;border:1px solid #333;border-radius:6px;padding:6px 8px;font-size:14px;width:0;min-height:44px}
+/* Gallery */
+#gallery-view{display:none;flex:1;overflow-y:auto;padding:10px;padding-bottom:56px}
+.gallery-bar{display:flex;gap:6px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+.gtab{background:none;border:1px solid #333;color:#777;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;width:auto;margin-top:0;min-height:36px}
+.gtab.active{color:#fff;border-color:#555}
+#scan-btn{margin-left:auto;width:auto;font-size:13px;padding:6px 14px;margin-top:0;min-height:36px}
+#gallery-breadcrumb{font-size:13px;color:#888;margin-bottom:8px;display:none}
+#gallery-breadcrumb a{color:#5af;text-decoration:none;cursor:pointer}
+#gallery-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px}
+.gcard{background:#1a1a1a;border-radius:8px;overflow:hidden;cursor:pointer}
+.gthumb{position:relative;width:100%;aspect-ratio:1;background:#111;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.gthumb canvas,.gthumb img{position:absolute;inset:0;width:100%;height:100%}
+.gthumb canvas{object-fit:cover}
+.gthumb img{object-fit:cover;opacity:0;transition:opacity .25s}
+.gthumb img.gloaded{opacity:1}
+.gthumb-icon{font-size:40px;color:#444;position:relative}
+.gmeta{padding:6px 8px 8px}
+.gname{font-size:12px;color:#bbb;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gdate{font-size:11px;color:#555;margin-top:2px}
+#gallery-pagination{display:flex;align-items:center;gap:12px;margin-top:14px;font-size:13px;color:#666}
+#gallery-pagination button{width:auto;padding:6px 14px;margin-top:0;font-size:13px;min-height:40px}
+#gallery-pagination button:disabled{opacity:.35;cursor:default}
+/* Download button */
+.dl-btn{display:block;text-align:center;background:#2a2a2a;color:#5af;border:1px solid #333;border-radius:6px;padding:6px 0;font-size:12px;margin:5px 8px 7px;text-decoration:none;min-height:36px;display:flex;align-items:center;justify-content:center}
+.dl-btn:hover{background:#333}
+/* Lightbox */
+#lightbox{display:none;position:fixed;inset:0;z-index:200;align-items:center;justify-content:center;flex-direction:column}
+#lb-bg{position:absolute;inset:0;background:rgba(0,0,0,.93)}
+#lb-img{position:relative;max-width:95vw;max-height:85vh;object-fit:contain}
+#lb-close{position:absolute;top:12px;right:16px;background:none;border:none;color:#fff;font-size:34px;cursor:pointer;line-height:1;width:auto;padding:0}
+#lb-caption{position:absolute;bottom:10px;left:0;right:0;text-align:center;font-size:13px;color:#aaa;pointer-events:none}
+</style>
+</head>
+<body>
+
+<div id="live-view">
+  <div id="viewer">
+    <img id="stream" src="/stream" alt="Connecting to camera…">
+    <div id="osd">
+      <div class="oitem"><div class="lbl">mode</div><div class="val" id="o-mode">P</div></div>
+      <div class="oitem"><div class="lbl">shutter</div><div class="val dim" id="o-shut">---</div></div>
+      <div class="oitem"><div class="lbl">iso</div><div class="val dim" id="o-iso">AUTO</div></div>
+      <div class="oitem"><div class="lbl">aperture</div><div class="val" id="o-ap">f/--</div></div>
+      <div class="oitem"><div class="lbl">focus</div><div class="val" id="o-foc">AF</div></div>
+      <div id="rec">&#9679; REC <span id="rec-t">00:00</span></div>
+      <div id="tl-ind" style="display:none">&#9654; TL <span id="tl-n">0</span></div>
+    </div>
+  </div>
+
+  <div id="msg"></div>
+
+  <div id="fab-row">
+    <button class="fab" id="btn-still">&#128247; Still</button>
+    <button class="fab" id="btn-rec">&#9654; Rec</button>
+    <button class="fab tl-on" id="btn-tl" onclick="toggleTl()" style="background:#2a2a2a;border-color:#333;color:#ccc">TL</button>
+  </div>
+
+  <div id="drawer-handle" onclick="toggleDrawer()">&#9654; Camera Controls</div>
+  <div id="ctrl">
+    <div id="ctrl-inner">
+
+      <div class="grp">
+        <h3>Mode</h3>
+        <div class="row">
+          <button id="mp" onclick="setMode('p')">P</button>
+          <button id="ma" onclick="setMode('a')">A</button>
+          <button id="ms" onclick="setMode('s')">S</button>
+          <button id="mm" onclick="setMode('m')">M</button>
+        </div>
+        <button id="btn-af" onclick="toggleAf()">AF: ON</button>
+      </div>
+
+      <div class="grp">
+        <h3>Focus</h3>
+        <input type="range" id="fslider" min="0" max="100" value="50">
+        <div class="row">
+          <button onclick="cmd('focus down')">&#8593; Near</button>
+          <button onclick="cmd('focus up')">&#8595; Far</button>
+        </div>
+      </div>
+
+      <div class="grp">
+        <h3>ISO</h3>
+        <select id="iso-sel" onchange="setIso(this.value)">
+          <option value="auto">AUTO</option>
+          <option value="100">100</option>
+          <option value="200">200</option>
+          <option value="400">400</option>
+          <option value="800">800</option>
+          <option value="1600">1600</option>
+          <option value="3200">3200</option>
+          <option value="6400">6400</option>
+        </select>
+      </div>
+
+      <div class="grp">
+        <h3>Shutter</h3>
+        <select id="shut-sel" onchange="setShutter(this.value)">
+          <option value="500000">2"</option>
+          <option value="250000">1"</option>
+          <option value="125000">1/8</option>
+          <option value="50000">1/20</option>
+          <option value="33333">1/30</option>
+          <option value="16667" selected>1/60</option>
+          <option value="8333">1/120</option>
+          <option value="4000">1/250</option>
+          <option value="2000">1/500</option>
+          <option value="1000">1/1000</option>
+          <option value="500">1/2000</option>
+          <option value="250">1/4000</option>
+        </select>
+      </div>
+
+      <div class="grp">
+        <h3>Camera Mode</h3>
+        <select id="cam-mode-sel" onchange="setCamMode(this.value)">
+          <option value="0">Loading…</option>
+        </select>
+      </div>
+
+      <div class="grp">
+        <h3>Timelapse</h3>
+        <div id="tl-status" style="font-size:12px;color:#888;min-height:16px"></div>
+        <div class="numrow"><label>Interval (s)</label><input type="number" id="tl-iv" min="2" max="3600" value="5" step="1"></div>
+        <div class="numrow"><label>Max frames</label><input type="number" id="tl-max" min="0" max="99999" value="0"></div>
+      </div>
+
+    </div>
+  </div>
+</div><!-- #live-view -->
+
+<div id="gallery-view">
+  <div class="gallery-bar">
+    <button class="gtab active" id="gtab-stills"     onclick="setGTab('stills')">Stills</button>
+    <button class="gtab"        id="gtab-videos"     onclick="setGTab('videos')">Videos</button>
+    <button class="gtab"        id="gtab-timelapses" onclick="setGTab('timelapses')">Timelapses</button>
+    <button id="scan-btn" onclick="doScan()">Scan</button>
+  </div>
+  <div id="gallery-breadcrumb">
+    <a onclick="exitSession()">&#8592; Sessions</a>
+    &nbsp;<span id="sess-name"></span>
+  </div>
+  <div id="gallery-grid"></div>
+  <div id="gallery-pagination">
+    <button id="prev-btn" onclick="changePage(-1)" disabled>&#8592; Prev</button>
+    <span id="page-info">Page 1</span>
+    <button id="next-btn" onclick="changePage(1)" disabled>Next &#8594;</button>
+  </div>
+</div>
+
+<div id="bottomnav">
+  <button class="bnav-btn active" id="bnav-live" onclick="showView('live')">
+    <span class="bicon">&#127909;</span>Live
+  </button>
+  <button class="bnav-btn" id="bnav-gallery" onclick="showView('gallery')">
+    <span class="bicon">&#128247;</span>Gallery
+  </button>
+</div>
+
+<div id="lightbox">
+  <div id="lb-bg" onclick="closeLightbox()"></div>
+  <img id="lb-img" src="" alt="">
+  <button id="lb-close" onclick="closeLightbox()">&#x2715;</button>
+  <div id="lb-caption"></div>
+</div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const msg = t => { $('msg').textContent = t; };
+
+let af = true, recording = false, recStart = 0, recTick = null, tl_active = false;
+let drawerOpen = false;
+
+function toggleDrawer() {
+  drawerOpen = !drawerOpen;
+  $('ctrl').classList.toggle('open', drawerOpen);
+  $('drawer-handle').textContent = (drawerOpen ? '&#9660; Camera Controls' : '&#9654; Camera Controls');
+}
+
+function showView(v) {
+  $('live-view').style.display    = v === 'live'    ? 'flex' : 'none';
+  $('gallery-view').style.display = v === 'gallery' ? 'block' : 'none';
+  $('bnav-live').classList.toggle('active',    v === 'live');
+  $('bnav-gallery').classList.toggle('active', v === 'gallery');
+  if (v === 'gallery') loadGallery();
+}
+
+async function cmd(c) {
+  try {
+    const r = await fetch('/api/' + encodeURIComponent(c), {method:'POST'});
+    const t = (await r.text()).trim();
+    msg(t);
+    return t;
+  } catch(e) { msg('Connection lost'); return 'ERR'; }
+}
+
+function setMode(m) {
+  cmd('mode ' + m);
+  ['p','a','s','m'].forEach(x => $('m'+x).classList.remove('on'));
+  $('m'+m).classList.add('on');
+}
+function toggleAf() {
+  af = !af;
+  cmd('af ' + (af?'on':'off'));
+  $('btn-af').textContent = 'AF: ' + (af?'ON':'OFF');
+  $('btn-af').classList.toggle('on', af);
+}
+function setIso(v) { cmd(v==='auto'?'iso auto':'iso '+v); }
+function setShutter(us) { cmd('shutter '+us); }
+
+async function loadCamModes() {
+  try {
+    const txt = await cmd('cam_mode list');
+    const modes = JSON.parse(txt);
+    const sel = $('cam-mode-sel');
+    if (!modes || !modes.length) return;
+    sel.innerHTML = modes.map(m =>
+      '<option value="'+m.index+'">'+esc(m.label)+'</option>').join('');
+  } catch(e) {}
+}
+function setCamMode(idx) {
+  msg('Switching camera mode…');
+  cmd('cam_mode set ' + idx).then(r => msg(r));
+}
+loadCamModes();
+
+let fTimer = null;
+$('fslider').addEventListener('input', function() {
+  const pos = (this.value/100).toFixed(2);
+  clearTimeout(fTimer);
+  fTimer = setTimeout(() => cmd('focus '+pos), 80);
+});
+
+$('btn-still').addEventListener('click', async function() {
+  this.disabled = true;
+  msg('Capturing…');
+  const r = await cmd('still');
+  this.disabled = false;
+  if (r.startsWith('OK ')) msg('Saved: ' + r.slice(3).trim().split('/').pop());
+});
+
+$('btn-rec').addEventListener('click', async function() {
+  if (!recording) {
+    const r = await cmd('record_start');
+    if (r.startsWith('OK')) {
+      recording = true; recStart = Date.now();
+      this.innerHTML = '&#9646;&#9646; Stop';
+      this.classList.add('rec-on');
+      $('rec').style.display = 'block';
+      recTick = setInterval(tickRec, 1000);
+    }
+  } else {
+    await cmd('record_stop');
+    stopRec();
+  }
+});
+
+function tickRec() {
+  const s = Math.floor((Date.now()-recStart)/1000);
+  $('rec-t').textContent = String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+}
+function stopRec() {
+  recording = false; clearInterval(recTick); recTick = null;
+  $('btn-rec').innerHTML = '&#9654; Rec';
+  $('btn-rec').classList.remove('rec-on');
+  $('rec').style.display = 'none';
+}
+
+function toggleTl() {
+  if (!tl_active) {
+    const iv = Math.max(2, parseInt($('tl-iv').value) || 5);
+    const max = parseInt($('tl-max').value) || 0;
+    cmd('timelapse start base=' + (iv * 1000) + ' max=' + max);
+  } else { cmd('timelapse stop'); }
+}
+function startTlUi(count) {
+  tl_active = true;
+  $('btn-tl').innerHTML = 'TL &#9646;&#9646;'; $('btn-tl').classList.add('tl-on');
+  $('tl-ind').style.display = 'block';
+  $('tl-n').textContent = count || 0; $('tl-status').textContent = (count || 0) + ' frames';
+}
+function stopTlUi() {
+  tl_active = false;
+  $('btn-tl').innerHTML = 'TL'; $('btn-tl').classList.remove('tl-on');
+  $('tl-ind').style.display = 'none'; $('tl-status').textContent = '';
+}
+
+function fmtShutter(us) {
+  if (!us || us <= 0) return '---';
+  const s = us/1e6;
+  return s < 0.5 ? '1/'+Math.round(1/s) : s.toFixed(1)+'"';
+}
+
+async function pollStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const st = await r.json();
+    $('o-mode').textContent = st.mode||'--';
+    const sm = st.mode==='S'||st.mode==='M';
+    $('o-shut').textContent = fmtShutter(st.shutter_us);
+    $('o-shut').className = 'val'+(sm?'':' dim');
+    $('o-iso').textContent = st.iso===0?'AUTO':st.iso;
+    $('o-iso').className = 'val'+(st.iso===0?' dim':'');
+    $('o-ap').textContent = st.aperture>0?'f/'+st.aperture.toFixed(1):'f/--';
+    const lp = st.lens_pos;
+    $('o-foc').textContent = (lp<0||st.af)?'AF':lp.toFixed(2);
+    if (st.recording && !recording) {
+      recording = true; recStart = Date.now();
+      $('btn-rec').innerHTML = '&#9646;&#9646; Stop';
+      $('btn-rec').classList.add('rec-on');
+      $('rec').style.display = 'block';
+      recTick = setInterval(tickRec, 1000);
+    } else if (!st.recording && recording) { stopRec(); }
+    if (st.tl_active && !tl_active) startTlUi(st.tl_count);
+    else if (!st.tl_active && tl_active) stopTlUi();
+    else if (tl_active) { $('tl-n').textContent = st.tl_count; $('tl-status').textContent = st.tl_count + ' frames'; }
+    if (!$('fslider').matches(':active') && lp >= 0)
+      $('fslider').value = Math.round(lp*100);
+    if (st.af !== af) { af = st.af; $('btn-af').textContent='AF: '+(af?'ON':'OFF'); $('btn-af').classList.toggle('on',af); }
+    const m = (st.mode||'P').toLowerCase();
+    ['p','a','s','m'].forEach(x => $('m'+x).classList.toggle('on', x===m));
+    const sel = $('cam-mode-sel');
+    if (st.cam_mode_index != null && !sel.matches(':focus') && sel.options.length > st.cam_mode_index)
+      sel.value = st.cam_mode_index;
+  } catch(e) {}
+  setTimeout(pollStatus, 500);
+}
+pollStatus();
+
+// ---- Blurhash decoder ----
+const _b83='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz#$%*+,-.:;=?@[]^_{|}~';
+function _d83(s){return[...s].reduce((a,c)=>a*83+_b83.indexOf(c),0);}
+function _lin(v){v/=255;return v<=0.04045?v/12.92:((v+0.055)/1.055)**2.4;}
+function _srgb(v){v=Math.max(0,Math.min(1,v));return Math.round(v<=0.0031308?v*12.92*255:(1.055*v**(1/2.4)-0.055)*255);}
+function _spow(v,e){return Math.sign(v)*Math.abs(v)**e;}
+function drawBlurhash(canvas,hash){
+  if(!hash)return;
+  const sf=_d83(hash[0]),ny=Math.floor(sf/9)+1,nx=sf%9+1;
+  const maxAC=(_d83(hash[1])+1)/166;
+  const cols=[];
+  for(let i=0;i<nx*ny;i++){
+    if(i===0){const dc=_d83(hash.slice(2,6));cols.push([_lin(dc>>16),_lin((dc>>8)&255),_lin(dc&255)]);}
+    else{const ac=_d83(hash.slice(4+(i-1)*2,6+(i-1)*2));cols.push([_spow(Math.floor(ac/361)-9,2)*maxAC,_spow(Math.floor(ac/19)%19-9,2)*maxAC,_spow(ac%19-9,2)*maxAC]);}
+  }
+  const w=canvas.width,h=canvas.height,px=new Uint8ClampedArray(w*h*4);
+  for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+    let r=0,g=0,b=0;
+    for(let j=0;j<ny;j++)for(let i=0;i<nx;i++){
+      const ba=Math.cos(Math.PI*x*i/w)*Math.cos(Math.PI*y*j/h);
+      const[cr,cg,cb]=cols[j*nx+i];r+=cr*ba;g+=cg*ba;b+=cb*ba;
+    }
+    const o=(y*w+x)*4;px[o]=_srgb(r);px[o+1]=_srgb(g);px[o+2]=_srgb(b);px[o+3]=255;
+  }
+  canvas.getContext('2d').putImageData(new ImageData(px,w,h),0,0);
+}
+
+// ---- Gallery ----
+let gTab = 'stills', gPage = 0, gLimit = 20;
+let gSessionId = null, gSessionName = '';
+let gItems = [];
+
+function setGTab(t) {
+  gTab = t; gPage = 0; gItems = [];
+  gSessionId = null; gSessionName = '';
+  ['stills','videos','timelapses'].forEach(x =>
+    $('gtab-'+x).classList.toggle('active', x===t));
+  $('gallery-breadcrumb').style.display = 'none';
+  loadGallery();
+}
+
+function exitSession() {
+  gSessionId = null; gSessionName = '';
+  gPage = 0; gItems = [];
+  $('gallery-breadcrumb').style.display = 'none';
+  loadGallery();
+}
+
+function changePage(d) {
+  gPage = Math.max(0, gPage + d);
+  loadGallery();
+}
+
+function esc(s) {
+  return String(s)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function loadGallery() {
+  let c;
+  if (gTab === 'stills') {
+    c = 'gallery list type=stills page='+gPage+' limit='+gLimit;
+  } else if (gTab === 'videos') {
+    c = 'gallery list type=videos page='+gPage+' limit='+gLimit;
+  } else {
+    if (gSessionId !== null) {
+      c = 'gallery list type=frames session='+gSessionId+' page='+gPage+' limit='+gLimit;
+    } else {
+      c = 'gallery list type=timelapses page='+gPage+' limit='+gLimit;
+    }
+  }
+  const txt = await cmd(c);
+  try { gItems = JSON.parse(txt); } catch(e) { gItems = []; }
+  renderGrid();
+}
+
+function renderGrid() {
+  const grid = $('gallery-grid');
+  grid.innerHTML = '';
+  for (const item of gItems) {
+    const card = document.createElement('div');
+    card.className = 'gcard';
+    const isSession = 'frame_count' in item;
+    if (isSession) {
+      const bh = item.first_frame_blurhash || '';
+      const thumb = item.first_frame_id
+        ? '<div class="gthumb">'+(bh?'<canvas width="32" height="18"></canvas>':'')
+          +'<img src="/api/media/'+item.first_frame_id+'/thumb" loading="lazy" alt=""></div>'
+        : '<div class="gthumb"><span class="gthumb-icon">&#128444;</span></div>';
+      card.innerHTML = thumb
+        +'<div class="gmeta">'
+        +'<div class="gname">'+esc(item.session_name)+'</div>'
+        +'<div class="gdate">'+(item.started_at||'').substring(0,10)+' &middot; '+item.frame_count+' frames</div>'
+        +'<a class="dl-btn" href="/api/download/session/'+item.id+'" download>&#8659; Download ZIP</a>'
+        +'</div>';
+      if (item.first_frame_id && bh) {
+        const cv = card.querySelector('canvas');
+        if (cv) drawBlurhash(cv, bh);
+        const img = card.querySelector('img');
+        if (img) img.onload = () => { img.classList.add('gloaded'); if(cv) cv.style.opacity=0; };
+      }
+      card.querySelector('.dl-btn').addEventListener('click', e => e.stopPropagation());
+      card.onclick = () => {
+        gSessionId = item.id; gSessionName = item.session_name;
+        gPage = 0;
+        $('gallery-breadcrumb').style.display = '';
+        $('sess-name').textContent = item.session_name;
+        loadGallery();
+      };
+    } else {
+      const isStill = item.type==='still'||item.type==='tl_frame';
+      const bh = item.blurhash || '';
+      card.innerHTML =
+        '<div class="gthumb">'+(bh?'<canvas width="32" height="18"></canvas>':'')
+        +'<img src="/api/media/'+item.id+'/thumb" loading="lazy" alt=""></div>'
+        +'<div class="gmeta">'
+        +'<div class="gname">'+esc(item.filename)+'</div>'
+        +'<div class="gdate">'+(item.captured_at||'').substring(0,10)+'</div>'
+        +'<a class="dl-btn" href="/api/download/'+item.id+'" download="'+esc(item.filename)+'">&#8659; Download</a>'
+        +'</div>';
+      const thumb = card.querySelector('.gthumb');
+      if (bh) drawBlurhash(thumb.querySelector('canvas'), bh);
+      const img = thumb.querySelector('img');
+      img.onload = () => { img.classList.add('gloaded'); const cv=thumb.querySelector('canvas'); if(cv) cv.style.opacity=0; };
+      card.querySelector('.dl-btn').addEventListener('click', e => e.stopPropagation());
+      if (isStill) card.onclick = () => openLightbox('/api/media/'+item.id, item.filename);
+    }
+    grid.appendChild(card);
+  }
   $('prev-btn').disabled = gPage === 0;
   $('next-btn').disabled = gItems.length < gLimit;
   $('page-info').textContent = 'Page '+(gPage+1);
@@ -944,8 +1583,10 @@ static const char* content_type_for(const std::string& path) {
 }
 
 // Stream a file (or a byte range of it) over the connection.
+// When download_filename is non-empty, adds Content-Disposition: attachment.
 static void serve_file(const Conn& c, const std::string& path,
-                       const std::string& range_hdr)
+                       const std::string& range_hdr,
+                       const std::string& download_filename = {})
 {
     int fd = ::open(path.c_str(), O_RDONLY);
     if (fd < 0) {
@@ -989,6 +1630,11 @@ static void serve_file(const Conn& c, const std::string& path,
     hdr += "Content-Type: ";  hdr += ct;  hdr += "\r\n";
     hdr += "Content-Length: "; hdr += std::to_string(length); hdr += "\r\n";
     hdr += "Accept-Ranges: bytes\r\n";
+    if (!download_filename.empty()) {
+        hdr += "Content-Disposition: attachment; filename=\"";
+        hdr += download_filename;
+        hdr += "\"\r\n";
+    }
     hdr += "Access-Control-Allow-Origin: *\r\nCache-Control: no-store\r\n\r\n";
 
     if (!c.write(hdr.c_str(), hdr.size())) { ::close(fd); return; }
@@ -1182,6 +1828,75 @@ static void serve_thumbnail(const Conn& c, int64_t id,
     serve_file(c, cache_path, "");
 }
 
+// Stream a directory as a gzip'd tar archive directly to the client connection.
+// The tar is created on-the-fly by a child process (no temp file).
+static void serve_tar_gz(const Conn& c,
+                         const std::string& session_dir,
+                         const std::string& download_name)
+{
+    // Validate that session_dir exists and is a directory
+    struct stat st;
+    if (::stat(session_dir.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
+        const char kErr[] = "Session directory not found";
+        send_http(c, 404, "text/plain", kErr, sizeof(kErr) - 1);
+        return;
+    }
+
+    int pipefd[2];
+    if (::pipe(pipefd) != 0) {
+        const char kErr[] = "Internal error";
+        send_http(c, 500, "text/plain", kErr, sizeof(kErr) - 1);
+        return;
+    }
+
+    pid_t pid = ::fork();
+    if (pid < 0) {
+        ::close(pipefd[0]); ::close(pipefd[1]);
+        const char kErr[] = "Internal error";
+        send_http(c, 500, "text/plain", kErr, sizeof(kErr) - 1);
+        return;
+    }
+    if (pid == 0) {
+        // Child: tar czf - -C session_dir . → pipe write end → parent reads
+        ::close(pipefd[0]);
+        ::dup2(pipefd[1], STDOUT_FILENO);
+        ::close(pipefd[1]);
+        int devnull = ::open("/dev/null", O_RDWR);
+        if (devnull >= 0) { ::dup2(devnull, STDIN_FILENO); ::dup2(devnull, STDERR_FILENO); ::close(devnull); }
+        const char* argv[] = {
+            "tar", "czf", "-", "-C", session_dir.c_str(), ".", nullptr
+        };
+        ::execvp("tar", const_cast<char* const*>(argv));
+        ::_exit(1);
+    }
+    ::close(pipefd[1]);
+
+    // Send HTTP response header (no Content-Length — streaming with HTTP/1.0 close)
+    std::string resp_hdr;
+    resp_hdr.reserve(256);
+    resp_hdr += "HTTP/1.0 200 OK\r\n";
+    resp_hdr += "Content-Type: application/gzip\r\n";
+    resp_hdr += "Content-Disposition: attachment; filename=\"";
+    resp_hdr += download_name;
+    resp_hdr += "\"\r\n";
+    resp_hdr += "Access-Control-Allow-Origin: *\r\nCache-Control: no-store\r\n\r\n";
+    if (!c.write(resp_hdr.c_str(), resp_hdr.size())) {
+        ::close(pipefd[0]);
+        ::kill(pid, SIGKILL); ::waitpid(pid, nullptr, 0);
+        return;
+    }
+
+    // Relay tar output to client
+    char buf[65536];
+    while (true) {
+        ssize_t n = ::read(pipefd[0], buf, sizeof(buf));
+        if (n <= 0) break;
+        if (!c.write(buf, static_cast<size_t>(n))) break;
+    }
+    ::close(pipefd[0]);
+    ::waitpid(pid, nullptr, 0);
+}
+
 // ---------------------------------------------------------------------------
 // Listen + client threads
 // ---------------------------------------------------------------------------
@@ -1231,10 +1946,11 @@ void MjpegServer::client_loop(int fd, void* ssl_vp) {
         ss >> method >> raw_path;
     }
 
-    // Drain remaining headers; capture Range for byte-range serving.
-    std::string hdr, range_hdr;
+    // Drain remaining headers; capture Range for byte-range serving and User-Agent for UI selection.
+    std::string hdr, range_hdr, user_agent;
     while (read_line(c, hdr) && !hdr.empty()) {
         if (hdr.rfind("Range: ", 0) == 0) range_hdr = hdr.substr(7);
+        else if (hdr.rfind("User-Agent: ", 0) == 0) user_agent = hdr.substr(12);
     }
 
     // URL-decode and strip query string
@@ -1244,8 +1960,14 @@ void MjpegServer::client_loop(int fd, void* ssl_vp) {
 
     // Route
     if (method == "GET" && path == "/") {
-        send_http(c, 200, "text/html; charset=utf-8",
-                  kWebUiHtml, sizeof(kWebUiHtml) - 1);
+        bool mobile = is_mobile_ua(user_agent) || is_tablet_ua(user_agent);
+        if (mobile) {
+            send_http(c, 200, "text/html; charset=utf-8",
+                      kWebUiHtmlMobile, sizeof(kWebUiHtmlMobile) - 1);
+        } else {
+            send_http(c, 200, "text/html; charset=utf-8",
+                      kWebUiHtmlDesktop, sizeof(kWebUiHtmlDesktop) - 1);
+        }
 
     } else if (method == "GET" && path == "/stream") {
         // Remove recv timeout — stream connection is long-lived
@@ -1355,6 +2077,67 @@ void MjpegServer::client_loop(int fd, void* ssl_vp) {
                 serve_file(c, *maybe_path, range_hdr);
             }
         }
+
+    } else if (method == "GET" && path.rfind("/api/download/", 0) == 0) {
+        // Download routes — rate-limited by active_downloads_ semaphore.
+        int prev = active_downloads_.fetch_add(1, std::memory_order_relaxed);
+        if (prev >= download_queue_max_.load(std::memory_order_relaxed)) {
+            active_downloads_.fetch_sub(1, std::memory_order_relaxed);
+            const char kBusy[] = "Download queue full — try again shortly";
+            send_http(c, 429, "text/plain", kBusy, sizeof(kBusy) - 1);
+            c.close();
+            return;
+        }
+
+        std::string dtail = path.substr(14); // strip "/api/download/"
+
+        if (dtail.rfind("session/", 0) == 0) {
+            // GET /api/download/session/<session_id>  → timelapse as .tar.gz
+            std::string id_str = dtail.substr(8);
+            int64_t sess_id = 0;
+            try { sess_id = std::stoll(id_str); } catch (...) {}
+
+            if (sess_id <= 0) {
+                const char kErr[] = "Bad session id";
+                send_http(c, 404, "text/plain", kErr, sizeof(kErr) - 1);
+            } else {
+                MediaDb* db = nullptr;
+                { std::lock_guard<std::mutex> lk(db_mtx_); db = db_; }
+                std::optional<TimelapseSession> sess;
+                if (db) sess = db->get_timelapse_session(sess_id);
+                if (!sess) {
+                    const char kErr[] = "Session not found";
+                    send_http(c, 404, "text/plain", kErr, sizeof(kErr) - 1);
+                } else {
+                    std::string fname = sess->session_name + ".tar.gz";
+                    serve_tar_gz(c, sess->session_dir, fname);
+                }
+            }
+        } else {
+            // GET /api/download/<media_id>  → individual still or video with attachment header
+            int64_t id = 0;
+            try { id = std::stoll(dtail); } catch (...) {}
+
+            if (id <= 0) {
+                const char kErr[] = "Bad id";
+                send_http(c, 404, "text/plain", kErr, sizeof(kErr) - 1);
+            } else {
+                MediaDb* db = nullptr;
+                std::string tdir;
+                { std::lock_guard<std::mutex> lk(db_mtx_); db = db_; tdir = thumb_cache_dir_; }
+                std::optional<std::string> maybe_path;
+                if (db) maybe_path = db->get_path_for_serving(id);
+                if (!maybe_path) {
+                    const char kErr[] = "Not Found";
+                    send_http(c, 404, "text/plain", kErr, sizeof(kErr) - 1);
+                } else {
+                    std::string fname = maybe_path->substr(maybe_path->rfind('/') + 1);
+                    serve_file(c, *maybe_path, range_hdr, fname);
+                }
+            }
+        }
+
+        active_downloads_.fetch_sub(1, std::memory_order_relaxed);
 
     } else {
         const char kNotFound[] = "Not Found";

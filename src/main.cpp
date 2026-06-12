@@ -242,6 +242,7 @@ int main() {
     auto db = std::make_unique<MediaDb>(db_dir + "/media.db",
                                         cfg.stills_dir, cfg.video_dir, cfg.tl_dir);
     mjpeg.set_media_db(db.get(), thumb_dir);
+    mjpeg.set_download_queue_max(cfg.download_queue_max);
 
     // ---- Camera mode list (built once after camera starts) ----
     std::vector<CameraMode>  cam_modes     = camera.get_modes();
@@ -832,6 +833,8 @@ int main() {
               << ",\"recording\":"  << (recording   ? "true" : "false")
               << ",\"still_count\":" << still_count
               << ",\"dual_stream\":" << (camera.dual_stream() ? "true" : "false")
+              << ",\"cam_mode_index\":" << cam_mode_active
+              << ",\"cam_mode_count\":" << (int)cam_modes.size()
               << "}";
             return j.str();
         }
@@ -1045,6 +1048,40 @@ int main() {
             return "ERR usage: timelapse start|stop|status";
         }
 
+        if (verb == "cam_mode") {
+            if (args.size() < 2) return "ERR usage: cam_mode list|status|set <index>";
+            if (args[1] == "list") {
+                std::string j = "[";
+                for (int i = 0; i < (int)cam_modes.size(); ++i) {
+                    if (i) j += ",";
+                    j += "{\"index\":" + std::to_string(i)
+                       + ",\"label\":" + json_str(cam_mode_labels[i]) + "}";
+                }
+                j += "]";
+                return j;
+            }
+            if (args[1] == "status") {
+                if (cam_modes.empty()) return "{\"index\":0,\"label\":\"unknown\"}";
+                return "{\"index\":" + std::to_string(cam_mode_active)
+                     + ",\"label\":" + json_str(cam_mode_labels[cam_mode_active]) + "}";
+            }
+            if (args[1] == "set") {
+                if (args.size() < 3) return "ERR usage: cam_mode set <index>";
+                int idx = 0;
+                try { idx = std::stoi(args[2]); } catch (...) { return "ERR invalid index"; }
+                if (idx < 0 || idx >= (int)cam_modes.size()) return "ERR index out of range";
+                if (idx == cam_mode_active) return "OK (already active)";
+                const CameraMode& m = cam_modes[idx];
+                if (!camera.restart_with_mode(m)) return "ERR mode switch failed";
+                if (renderer) renderer->update_texture_size(camera.width(), camera.height());
+                cam_mode_active   = find_active_mode();
+                cam_mode_selected = cam_mode_active;
+                rebuild_ladders();
+                return "OK " + cam_mode_labels[cam_mode_active];
+            }
+            return "ERR usage: cam_mode list|status|set <index>";
+        }
+
         if (verb == "gallery") {
             if (args.size() < 2) return "ERR usage: gallery list|scan|verify";
 
@@ -1241,9 +1278,11 @@ int main() {
               << ",\"recording\":"   << (recording      ? "true" : "false")
               << ",\"still_count\":" << still_count
               << ",\"dual_stream\":" << (camera.dual_stream() ? "true" : "false")
-              << ",\"tl_active\":"   << (tl_active ? "true" : "false")
-              << ",\"tl_count\":"    << tl_count
-              << ",\"tl_fn\":\""     << tl_fn_name(tl_fn_run) << "\""
+              << ",\"tl_active\":"      << (tl_active ? "true" : "false")
+              << ",\"tl_count\":"       << tl_count
+              << ",\"tl_fn\":\""        << tl_fn_name(tl_fn_run) << "\""
+              << ",\"cam_mode_index\":" << cam_mode_active
+              << ",\"cam_mode_count\":" << (int)cam_modes.size()
               << "}";
             mjpeg.set_status(j.str());
         }

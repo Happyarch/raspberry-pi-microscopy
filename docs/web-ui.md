@@ -7,13 +7,64 @@ open a browser on any device on the same network.
 ## Accessing the UI
 
 ```
-http://<pi-ip>:8080/          Web UI (dark theme, mobile-friendly)
+http://<pi-ip>:8080/          Web UI — desktop, mobile, or tablet layout (auto-detected)
 http://<pi-ip>:8080/stream    Raw MJPEG stream (works in <img> or mpv)
 http://<pi-ip>:8080/api/status  JSON status snapshot (GET)
 http://<pi-ip>:8080/api/<cmd>   Send a command (POST)
 ```
 
 Default IP: `192.168.1.220`. Default port: `8080` (configurable).
+
+The server detects the client's `User-Agent` and serves a mobile-optimised layout for phones
+(FAB capture buttons, slide-up controls drawer, bottom tab bar) and the full desktop grid layout
+for laptops and desktops. Tablets receive the mobile layout.
+
+### Connecting headless (no WiFi configured)
+
+If the Pi is powered on without a known WiFi network in range, it automatically starts a
+**WiFi access point** approximately 45 seconds after boot:
+
+| Setting | Value |
+|---------|-------|
+| SSID | `Microscopi` |
+| Password | *(none — open network)* |
+| Pi IP on AP | `192.168.42.1` |
+| Web UI | `http://microscopi.local:8080/` or `http://192.168.42.1:8080/` |
+
+Connect your phone, tablet, or laptop to the `Microscopi` WiFi network, then open the web UI.
+`microscopi.local` resolves via the Pi's built-in DNS — no mDNS/Bonjour required on the client.
+
+On a normal LAN, `microscopi.local` also resolves via mDNS (Avahi) on macOS, iOS, Android, and
+Windows 10+.
+
+> **Note:** The AP fallback is configured during the full image build (pi-gen). If you installed
+> the `.deb` on an existing Pi OS system, copy the NetworkManager connection and service files
+> from `config/pi-gen/stage3/01-microscopi/files/` manually:
+> ```bash
+> sudo install -m 600 microscopi-ap.nmconnection /etc/NetworkManager/system-connections/
+> sudo install -m 644 nm-dnsmasq-microscopi.conf /etc/NetworkManager/dnsmasq-shared.d/microscopi.conf
+> sudo install -m 755 microscopi-wifi-ap-check.sh /usr/local/bin/
+> sudo install -m 644 microscopi-wifi-ap.service /etc/systemd/system/
+> sudo systemctl enable --now microscopi-wifi-ap.service
+> ```
+
+## Downloading files
+
+Files can be downloaded directly from the gallery in the web UI (⬇ Download button on each card).
+Downloads are also available via direct URL:
+
+```
+GET /api/download/<media_id>           Download a still or video by media ID (Content-Disposition: attachment)
+GET /api/download/session/<session_id> Download a timelapse session as a .tar.gz archive (streamed, no temp file)
+```
+
+A semaphore limits concurrent downloads to avoid overloading the Pi. Excess requests receive
+HTTP 429. The limit is configurable in `microscopi.conf`:
+
+```ini
+[stream]
+download_queue_max = 2   # default; raise on Pi 4+ for faster concurrent downloads
+```
 
 ## Configuration (`[stream]` section in `microscopi.conf`)
 
@@ -26,6 +77,7 @@ Default IP: `192.168.1.220`. Default port: `8080` (configurable).
 | `stream_https` | `false` | Enable TLS. Browser will warn about self-signed certs unless you import the cert. |
 | `stream_cert` | *(empty)* | Path to a PEM certificate file. Required when `stream_https = true`. |
 | `stream_key` | *(empty)* | Path to a PEM private key file. Required when `stream_https = true`. |
+| `download_queue_max` | `2` | Maximum simultaneous file downloads. Requests over this limit receive HTTP 429. |
 
 All `[stream]` keys **except `stream_port`** are hot-reloadable via
 `systemctl reload microscopi` (or `kill -HUP <pid>`). Port changes require a
@@ -104,6 +156,9 @@ path. The response is plain text.
 | `timelapse start [args]` | `POST /api/timelapse%20start%20base%3D5000` | Start timelapse. See [`docs/controls.md`](controls.md) for all arguments. |
 | `timelapse stop` | `POST /api/timelapse%20stop` | Stop timelapse; renames session directory. |
 | `timelapse status` | `POST /api/timelapse%20status` | Returns JSON with active state, count, function, and next-in countdown. |
+| `cam_mode list` | `POST /api/cam_mode%20list` | Returns JSON array of `{index, label}` for all available camera modes. |
+| `cam_mode status` | `POST /api/cam_mode%20status` | Returns `{index, label}` of the active mode. |
+| `cam_mode set <N>` | `POST /api/cam_mode%20set%201` | Switch to camera mode by index (restarts sensor, rebuilds exposure ladders). |
 
 `GET /api/status` returns a JSON object with current camera and timelapse state:
 
@@ -121,7 +176,9 @@ path. The response is plain text.
   "dual_stream": false,
   "tl_active": false,
   "tl_count": 0,
-  "tl_fn": "linear"
+  "tl_fn": "linear",
+  "cam_mode_index": 0,
+  "cam_mode_count": 4
 }
 ```
 
