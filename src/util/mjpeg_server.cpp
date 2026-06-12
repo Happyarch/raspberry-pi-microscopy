@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <poll.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -35,15 +36,17 @@ static const char kWebUiHtml[] = R"HTML(<!DOCTYPE html>
 <title>Microscopi</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:#111;color:#ddd;font-family:system-ui,sans-serif;font-size:14px;user-select:none}
+html,body{height:100%;overflow:hidden}
+body{background:#111;color:#ddd;font-family:system-ui,sans-serif;font-size:14px;user-select:none;display:flex;flex-direction:column}
 /* Top nav */
-#topnav{display:flex;gap:4px;padding:6px 10px;background:#1a1a1a;border-bottom:1px solid #2a2a2a}
+#topnav{display:flex;gap:4px;padding:6px 10px;background:#1a1a1a;border-bottom:1px solid #2a2a2a;flex-shrink:0}
 .nav-btn{background:none;border:none;color:#777;font-size:13px;padding:4px 14px;cursor:pointer;border-radius:4px;transition:background .15s}
 .nav-btn:hover{background:#252525;color:#bbb}
 .nav-btn.active{color:#fff;background:#2e2e2e}
-/* Viewer */
-#viewer{position:relative;background:#000;display:flex;justify-content:center;align-items:center;min-height:40vw}
-#stream{max-width:100%;max-height:70vh;display:block;object-fit:contain}
+/* Viewer — grows to fill space between topnav and controls */
+#live-view{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden}
+#viewer{position:relative;background:#000;flex:1;min-height:0;overflow:hidden}
+#stream{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block}
 /* OSD overlay — mirrors the physical bar */
 #osd{
   position:absolute;bottom:0;left:0;right:0;
@@ -82,7 +85,7 @@ select{
   border-radius:4px;padding:5px;font-size:13px;margin-top:4px;cursor:pointer
 }
 /* Gallery */
-#gallery-view{display:none;padding:10px}
+#gallery-view{display:none;flex:1;overflow-y:auto;padding:10px}
 .gallery-bar{display:flex;gap:5px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
 .gtab{background:none;border:1px solid #333;color:#777;padding:3px 12px;border-radius:4px;cursor:pointer;font-size:12px;width:auto;margin-top:0}
 .gtab.active{color:#fff;border-color:#555}
@@ -242,7 +245,7 @@ let af = true, recording = false, recStart = 0, recTick = null, tl_active = fals
 
 // --- View switching ---
 function showView(v) {
-  $('live-view').style.display    = v === 'live'    ? 'block' : 'none';
+  $('live-view').style.display    = v === 'live'    ? 'flex' : 'none';
   $('gallery-view').style.display = v === 'gallery' ? 'block' : 'none';
   $('nav-live').classList.toggle('active',    v === 'live');
   $('nav-gallery').classList.toggle('active', v === 'gallery');
@@ -1002,6 +1005,22 @@ static void serve_file(const Conn& c, const std::string& path,
     ::close(fd);
 }
 
+// Kill and reap a child if it hasn't exited within timeout_ms.
+// Returns true only if the child exited with status 0.
+static bool wait_pid_timeout(pid_t pid, int timeout_ms) {
+    int elapsed = 0;
+    while (elapsed < timeout_ms) {
+        int st = 0;
+        if (::waitpid(pid, &st, WNOHANG) == pid)
+            return WIFEXITED(st) && WEXITSTATUS(st) == 0;
+        ::usleep(25000);
+        elapsed += 25;
+    }
+    ::kill(pid, SIGKILL);
+    ::waitpid(pid, nullptr, 0);
+    return false;
+}
+
 // Generate a 320-px-wide JPEG thumbnail from a still image using libturbojpeg.
 static bool generate_still_thumb(const std::string& src, const std::string& dst, int target_w) {
     std::string scale = "scale=" + std::to_string(target_w) + ":-1";
@@ -1023,9 +1042,7 @@ static bool generate_still_thumb(const std::string& src, const std::string& dst,
         ::execvp("ffmpeg", const_cast<char* const*>(argv));
         ::_exit(1);
     }
-    int status = 0;
-    ::waitpid(pid, &status, 0);
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    return wait_pid_timeout(pid, 15000);
 }
 
 // Generate a thumbnail from a video by spawning ffmpeg.
@@ -1052,10 +1069,13 @@ static double probe_video_duration(const std::string& src) {
     }
     ::close(pipefd[1]);
     char buf[64] = {};
-    ::read(pipefd[0], buf, sizeof(buf) - 1);
+    struct pollfd pfd = {pipefd[0], POLLIN, 0};
+    if (::poll(&pfd, 1, 15000) > 0 && (pfd.revents & POLLIN))
+        ::read(pipefd[0], buf, sizeof(buf) - 1);
+    else
+        ::kill(pid, SIGKILL);
     ::close(pipefd[0]);
-    int status = 0;
-    ::waitpid(pid, &status, 0);
+    ::waitpid(pid, nullptr, 0);
     try { return std::stod(buf); } catch (...) { return 0.0; }
 }
 
@@ -1083,9 +1103,7 @@ static bool generate_video_thumb(const std::string& src, const std::string& dst,
         ::execvp("ffmpeg", const_cast<char* const*>(argv));
         ::_exit(1);
     }
-    int status = 0;
-    ::waitpid(pid, &status, 0);
-    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    return wait_pid_timeout(pid, 30000);
 }
 
 // Decode thumbnail to 32x18 RGB via ffmpeg and compute its blurhash.
@@ -1113,13 +1131,21 @@ static std::string compute_thumb_blurhash(const std::string& thumb_path) {
     constexpr size_t kExpected = BW * BH * 3;
     std::vector<uint8_t> rgb(kExpected);
     size_t got = 0;
-    ssize_t n;
-    while (got < kExpected && (n = ::read(pipefd[0], rgb.data() + got, kExpected - got)) > 0)
+    bool timed_out = false;
+    while (got < kExpected) {
+        struct pollfd pfd = {pipefd[0], POLLIN, 0};
+        if (::poll(&pfd, 1, 10000) <= 0 || !(pfd.revents & POLLIN)) {
+            timed_out = true;
+            ::kill(pid, SIGKILL);
+            break;
+        }
+        ssize_t n = ::read(pipefd[0], rgb.data() + got, kExpected - got);
+        if (n <= 0) break;
         got += (size_t)n;
+    }
     ::close(pipefd[0]);
-    int status = 0;
-    ::waitpid(pid, &status, 0);
-    if (got < kExpected) return "";
+    ::waitpid(pid, nullptr, 0);
+    if (timed_out || got < kExpected) return "";
     return compute_blurhash(rgb.data(), BW, BH, 4, 3);
 }
 
