@@ -1,0 +1,43 @@
+name: Attach Pi Image to Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: 'Build Pi Image run ID that produced the artifact'
+        required: true
+      release_tag:
+        description: 'Release tag to attach the image to (e.g. v0.5.0)'
+        required: true
+
+jobs:
+  attach:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: write
+      actions: read
+
+    steps:
+      - name: Download Pi image artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh run download ${{ inputs.source_run_id }} \
+            -R ${{ github.repository }} \
+            -n "pi-image-$(gh run view ${{ inputs.source_run_id }} -R ${{ github.repository }} --json headSha -q '.headSha')" \
+            -D ./dist/ || \
+          gh run download ${{ inputs.source_run_id }} \
+            -R ${{ github.repository }} \
+            --dir ./dist/
+
+      - name: Upload image to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          IMAGE=$(find ./dist -name '*.img.xz' | head -1)
+          echo "Uploading: $IMAGE"
+          gh release upload ${{ inputs.release_tag }} "$IMAGE" \
+            --repo ${{ github.repository }} \
+            --clobber
